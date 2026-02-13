@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
 import { projects as projectsApi, tasks as tasksApi, notes as notesApi } from '../api/client';
 import Loader from '../components/Loader';
 import NoteDetailView from '../components/NoteDetailView';
@@ -32,12 +32,14 @@ export default function ProjectDetail() {
   const [searchParams] = useSearchParams();
   const parentIdFromUrl = searchParams.get('parentId'); // For creating sub-projects
   const navigate = useNavigate();
+  const location = useLocation();
   const isNew = projectId === 'new';
   const [project, setProject] = useState(null);
   const [projectTasks, setProjectTasks] = useState([]);
   const [subProjects, setSubProjects] = useState([]);
   const [parentChain, setParentChain] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [subProjectsLoading, setSubProjectsLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
@@ -70,6 +72,7 @@ export default function ProjectDetail() {
       setSubProjects([]);
       setParentChain([]);
       setLoading(false);
+      setAdding(false); // Reset adding state when entering new project form
       // If creating a sub-project, fetch parent info
       if (parentIdFromUrl) {
         projectsApi.get(parentIdFromUrl).then(({ data }) => {
@@ -80,6 +83,22 @@ export default function ProjectDetail() {
       return;
     }
     let cancelled = false;
+    
+    // Reset adding state when viewing an existing project
+    setAdding(false);
+    
+    // Check if we have a newly created sub-project in navigation state
+    const newSubProject = location.state?.newProject;
+    if (newSubProject && newSubProject.parentId === projectId) {
+      // Optimistically add the new sub-project to the list
+      setSubProjects((prev) => {
+        if (prev.some((sp) => sp._id === newSubProject._id)) return prev;
+        return [{ ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...prev];
+      });
+      // Clear the navigation state
+      navigate(location.pathname + location.search, { replace: true, state: {} });
+    }
+    
     async function fetchProject() {
       try {
         const [projRes, tasksRes] = await Promise.all([
@@ -87,25 +106,6 @@ export default function ProjectDetail() {
           tasksApi.list({ projectId }),
         ]);
         
-        // Load notes for the project
-        if (!cancelled) {
-          try {
-            setLoadingNotes(true);
-            const notesRes = await projectsApi.getNotes(projectId, { includeSubProjects: includeSubProjectsNotes });
-            if (!cancelled) {
-              setProjectNotes(notesRes.data || []);
-            }
-          } catch (err) {
-            if (!cancelled) {
-              console.error('Failed to load notes:', err);
-              setProjectNotes([]);
-            }
-          } finally {
-            if (!cancelled) {
-              setLoadingNotes(false);
-            }
-          }
-        }
         if (cancelled) return;
         const proj = projRes.data;
         if (!proj) {
@@ -126,11 +126,39 @@ export default function ProjectDetail() {
     }
     fetchProject();
     return () => { cancelled = true; };
-  }, [projectId, isNew, navigate, parentIdFromUrl, includeSubProjectsNotes]);
+  }, [projectId, isNew, navigate, parentIdFromUrl, location.pathname, location.search]);
 
   useEffect(() => {
     if (isNew && nameInputRef.current) nameInputRef.current.focus();
   }, [isNew]);
+
+  // Separate effect for loading notes to avoid refetching entire project
+  useEffect(() => {
+    if (isNew || !projectId) return;
+    let cancelled = false;
+    
+    async function fetchNotes() {
+      try {
+        setLoadingNotes(true);
+        const notesRes = await projectsApi.getNotes(projectId, { includeSubProjects: includeSubProjectsNotes });
+        if (!cancelled) {
+          setProjectNotes(notesRes.data || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to load notes:', err);
+          setProjectNotes([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingNotes(false);
+        }
+      }
+    }
+    
+    fetchNotes();
+    return () => { cancelled = true; };
+  }, [projectId, isNew, includeSubProjectsNotes]);
 
   async function handleCreateProject(e) {
     e.preventDefault();
@@ -141,12 +169,13 @@ export default function ProjectDetail() {
       const payload = { name, description: descriptionInput.trim() };
       if (parentIdFromUrl) payload.parentId = parentIdFromUrl;
       const { data: newProject } = await projectsApi.create(payload);
-      // Pass the newly created project via navigation state for instant display
+      
+      // Navigate back with the new project in state for optimistic display
       const destination = parentIdFromUrl ? `/tasks/projects/${parentIdFromUrl}` : '/tasks?tab=projects';
+      // Don't reset adding state here - let the navigation handle cleanup
       navigate(destination, { replace: true, state: { newProject } });
     } catch (err) {
       console.error(err);
-    } finally {
       setAdding(false);
     }
   }
@@ -323,6 +352,11 @@ export default function ProjectDetail() {
 
   if (isNew) {
     const backLink = parentIdFromUrl ? `/tasks/projects/${parentIdFromUrl}` : '/tasks?tab=projects';
+    
+    if (adding) {
+      return <Loader message={`Creating ${parentIdFromUrl ? 'sub-project' : 'project'}...`} />;
+    }
+    
     return (
       <div className="max-w-xl mx-auto">
         <Link to={backLink} className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block">
@@ -373,8 +407,7 @@ export default function ProjectDetail() {
           <div className="flex gap-2">
             <button
               type="submit"
-              disabled={adding}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
+              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700"
             >
               {parentIdFromUrl ? 'Create Sub-Project' : 'Create Project'}
             </button>
@@ -504,7 +537,11 @@ export default function ProjectDetail() {
             + New Sub-Project
           </Link>
         </div>
-        {subProjects.length > 0 ? (
+        {subProjectsLoading ? (
+          <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-slate-500 text-sm">Loading sub-projects...</p>
+          </div>
+        ) : subProjects.length > 0 ? (
           <div className="grid gap-2">
             {subProjects.map((sp) => {
               const spTotal = sp.totalTasks ?? 0;
