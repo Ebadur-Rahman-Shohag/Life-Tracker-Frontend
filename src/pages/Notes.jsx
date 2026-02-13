@@ -251,6 +251,7 @@ export default function Notes() {
     setNotes(res.data || []);
   }, [mode, selectedCategory, selectedProjectId]);
 
+  // Initial load only - show loader on first mount
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -271,7 +272,14 @@ export default function Notes() {
     return () => {
       cancelled = true;
     };
-  }, [loadNotes, loadStats, loadCategories, loadProjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
+
+  // Reload notes when mode/category/projectId changes (without showing loader)
+  // Note: search changes are handled by the debounced useEffect below
+  useEffect(() => {
+    loadNotes({ search });
+  }, [mode, selectedCategory, selectedProjectId, loadNotes]);
 
   // Debounced search refresh (prevents request on every keystroke)
   useEffect(() => {
@@ -280,11 +288,6 @@ export default function Notes() {
     }, 300);
     return () => clearTimeout(t);
   }, [search, loadNotes]);
-
-  // Reload notes when project filter changes
-  useEffect(() => {
-    loadNotes({ search });
-  }, [selectedProjectId, loadNotes]);
 
   function openNewNote() {
     const categoryPrefill =
@@ -447,12 +450,13 @@ export default function Notes() {
     ];
   }, [categories, stats, managedCategories]);
 
-  if (loading) {
-    return <Loader message="Loading notes..." />;
-  }
-
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <Loader message="Loading notes..." />
+        </div>
+      )}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center justify-between">
           <span>{error}</span>
@@ -461,7 +465,8 @@ export default function Notes() {
           </button>
         </div>
       )}
-
+      {!loading && (
+        <>
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Notes</h1>
@@ -674,6 +679,8 @@ export default function Notes() {
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
         />
+      )}
+        </>
       )}
     </div>
   );

@@ -170,13 +170,17 @@ export default function BudgetTracker() {
       setLoading(false);
     };
     loadAll();
-  }, [loadCategories, loadSummary, loadTransactions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
 
-  // Reload when period changes
+  // Reload when period changes (without showing loader)
   useEffect(() => {
-    loadSummary();
-    loadTransactions();
-  }, [period, loadSummary, loadTransactions]);
+    if (!loading) {
+      // Only reload if initial load is complete
+      loadSummary();
+      loadTransactions();
+    }
+  }, [period, loadSummary, loadTransactions, loading]);
 
   const handleTransactionSubmit = async (data) => {
     try {
@@ -345,12 +349,13 @@ export default function BudgetTracker() {
     return categories.filter(c => categoryIds.includes(c._id));
   }, [transactions, categories]);
 
-  if (loading) {
-    return <Loader message="Loading budget data..." />;
-  }
-
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <Loader message="Loading budget data..." />
+        </div>
+      )}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center justify-between">
           <span>{error}</span>
@@ -359,9 +364,11 @@ export default function BudgetTracker() {
           </button>
         </div>
       )}
+      {!loading && (
+        <>
       {/* Header */}
       <div>
-        <h1 className="text-2xl font- bold text-slate-800">Budget & Finance</h1>
+        <h1 className="text-2xl font-bold text-slate-800">Budget & Finance</h1>
         <p className="text-sm text-slate-600 mt-1">Track your income and expenses</p>
       </div>
 
@@ -371,9 +378,9 @@ export default function BudgetTracker() {
           <button
             key={p}
             onClick={() => setPeriod(p)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'bg-white text-slate-600 hover:bg-slate-100'
+            className={`px-4 py-2 rounded-lg font-medium ${period === p
+              ? 'bg-emerald-600 text-white'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
           >
             {p === 'week' ? 'This Week' : p === 'month' ? 'This Month' : 'This Year'}
@@ -928,6 +935,8 @@ export default function BudgetTracker() {
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
         />
+      )}
+        </>
       )}
     </div>
   );
