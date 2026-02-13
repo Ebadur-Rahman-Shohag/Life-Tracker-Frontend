@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { notes as notesApi } from '../api/client';
+import { notes as notesApi, projects as projectsApi } from '../api/client';
 import Loader from '../components/Loader';
 import NoteForm from '../components/NoteForm';
 import NoteCategoryForm from '../components/NoteCategoryForm';
@@ -57,7 +57,11 @@ function getCategoryColor(managedCategories, categoryName) {
   return cat?.color || null;
 }
 
-function NoteCard({ note, onView, onEdit, onDelete, onToggleFavorite, onToggleArchive }) {
+function NoteCard({ note, projects = [], onView, onEdit, onDelete, onToggleFavorite, onToggleArchive }) {
+  const connectedProjects = useMemo(() => {
+    if (!note.projectIds || note.projectIds.length === 0) return [];
+    return projects.filter((p) => note.projectIds.includes(p._id));
+  }, [note.projectIds, projects]);
   return (
     <div
       className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col cursor-pointer"
@@ -107,10 +111,29 @@ function NoteCard({ note, onView, onEdit, onDelete, onToggleFavorite, onToggleAr
         );
       })()}
 
-      <div className="mt-4 flex items-center justify-between gap-2">
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">
-          {note.category || 'Uncategorized'}
-        </span>
+      <div className="mt-4 flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">
+            {note.category || 'Uncategorized'}
+          </span>
+          {connectedProjects.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {connectedProjects.slice(0, 2).map((project) => (
+                <span
+                  key={project._id}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  title={project.name}
+                >
+                  <span>📁</span>
+                  <span className="max-w-[100px] truncate">{project.name}</span>
+                </span>
+              ))}
+              {connectedProjects.length > 2 && (
+                <span className="text-xs text-slate-500">+{connectedProjects.length - 2} more</span>
+              )}
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={() => onEdit(note)}
@@ -143,8 +166,10 @@ export default function Notes() {
   const [stats, setStats] = useState(null);
   const [notes, setNotes] = useState([]);
   const [managedCategories, setManagedCategories] = useState([]);
+  const [projects, setProjects] = useState([]);
 
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedProjectId, setSelectedProjectId] = useState('');
   const [mode, setMode] = useState('gallery'); // gallery | favorites | archived
   const [search, setSearch] = useState('');
 
@@ -202,6 +227,15 @@ export default function Notes() {
     }
   }, []);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      const { data } = await projectsApi.list({ includeArchived: true });
+      setProjects(data || []);
+    } catch (err) {
+      console.error('Failed to load projects:', err);
+    }
+  }, []);
+
   const loadNotes = useCallback(async (opts = {}) => {
     const effectiveSearch = (opts.search ?? '').trim();
     const params = {
@@ -209,10 +243,11 @@ export default function Notes() {
       favoriteOnly: mode === 'favorites' ? 'true' : 'false',
       category: selectedCategory,
       search: effectiveSearch || undefined,
+      projectId: selectedProjectId || undefined,
     };
     const res = await notesApi.list(params);
     setNotes(res.data || []);
-  }, [mode, selectedCategory]);
+  }, [mode, selectedCategory, selectedProjectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -220,7 +255,7 @@ export default function Notes() {
       setLoading(true);
       setError(null);
       try {
-        await Promise.all([loadStats(), loadCategories(), loadNotes({ search })]);
+        await Promise.all([loadStats(), loadCategories(), loadProjects(), loadNotes({ search })]);
       } catch (err) {
         if (!cancelled) {
           console.error(err);
@@ -234,7 +269,7 @@ export default function Notes() {
     return () => {
       cancelled = true;
     };
-  }, [loadNotes, loadStats, loadCategories]);
+  }, [loadNotes, loadStats, loadCategories, loadProjects]);
 
   // Debounced search refresh (prevents request on every keystroke)
   useEffect(() => {
@@ -243,6 +278,11 @@ export default function Notes() {
     }, 300);
     return () => clearTimeout(t);
   }, [search, loadNotes]);
+
+  // Reload notes when project filter changes
+  useEffect(() => {
+    loadNotes({ search });
+  }, [selectedProjectId, loadNotes]);
 
   function openNewNote() {
     const categoryPrefill =
@@ -506,12 +546,26 @@ export default function Notes() {
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              >
+                <option value="">All Projects</option>
+                {projects
+                  .filter((p) => !p.archived)
+                  .map((project) => (
+                    <option key={project._id} value={project._id}>
+                      {project.name}
+                    </option>
+                  ))}
+              </select>
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search notes…"
-                className="w-full md:w-80 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                className="flex-1 min-w-[160px] md:w-80 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
               />
               <button
                 onClick={() => loadNotes({ search })}
@@ -540,6 +594,7 @@ export default function Notes() {
                 <NoteCard
                   key={note._id}
                   note={note}
+                  projects={projects}
                   onView={openDetailView}
                   onEdit={openEditNote}
                   onDelete={handleDelete}
@@ -557,6 +612,7 @@ export default function Notes() {
         initialNote={editingNote}
         categories={categories}
         managedCategories={managedCategories}
+        projects={projects}
         onClose={closeForm}
         onSubmit={handleSave}
       />

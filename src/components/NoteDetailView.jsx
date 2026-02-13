@@ -1,5 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import BlockRenderer from './BlockRenderer';
+import { projects as projectsApi } from '../api/client';
 
 function formatTimestamp(iso) {
   try {
@@ -33,12 +35,59 @@ function textToTipTapJSON(text) {
 }
 
 export default function NoteDetailView({ open, note, managedCategories = [], onClose, onEdit, onDelete, onToggleFavorite, onToggleArchive }) {
-  if (!open || !note) return null;
+  const navigate = useNavigate();
+  const [connectedProjects, setConnectedProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
 
   const categoryInfo = useMemo(() => {
-    if (!managedCategories || !note.category) return null;
+    if (!managedCategories || !note?.category) return null;
     return managedCategories.find((c) => c.name === note.category);
-  }, [managedCategories, note.category]);
+  }, [managedCategories, note?.category]);
+
+  useEffect(() => {
+    async function loadProjects() {
+      if (!note?.projectIds || note.projectIds.length === 0) {
+        setConnectedProjects([]);
+        return;
+      }
+      setLoadingProjects(true);
+      try {
+        const { data } = await projectsApi.list({ includeArchived: true });
+        const projects = (data || []).filter((p) => note.projectIds.includes(p._id));
+        
+        // Build project paths with parent chain
+        const projectsWithPath = projects.map((project) => {
+          let path = project.name;
+          let current = project;
+          const visited = new Set([project._id]);
+          
+          // Build parent chain
+          while (current.parentId && !visited.has(current.parentId)) {
+            visited.add(current.parentId);
+            const parent = data.find((p) => p._id === current.parentId);
+            if (parent) {
+              path = `${parent.name} > ${path}`;
+              current = parent;
+            } else {
+              break;
+            }
+          }
+          return { ...project, path };
+        });
+        
+        setConnectedProjects(projectsWithPath);
+      } catch (err) {
+        console.error('Failed to load projects:', err);
+      } finally {
+        setLoadingProjects(false);
+      }
+    }
+    if (open && note) {
+      loadProjects();
+    }
+  }, [open, note]);
+
+  if (!open || !note) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -115,6 +164,29 @@ export default function NoteDetailView({ open, note, managedCategories = [], onC
             
             return <BlockRenderer content={contentToRender} />;
           })()}
+
+          {/* Connected Projects */}
+          {connectedProjects.length > 0 && (
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">Connected Projects</h3>
+              <div className="flex flex-wrap gap-2">
+                {connectedProjects.map((project) => (
+                  <button
+                    key={project._id}
+                    onClick={() => {
+                      navigate(`/tasks/projects/${project._id}`);
+                      onClose();
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                    title={`Go to ${project.path}`}
+                  >
+                    <span>📁</span>
+                    <span>{project.path}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tags */}
           {note.tags && note.tags.length > 0 && (

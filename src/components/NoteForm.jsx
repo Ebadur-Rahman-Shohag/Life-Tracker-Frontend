@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import BlockEditor from './BlockEditor';
+import ProjectSelector from './ProjectSelector';
 
 function normalizeTagsInput(value) {
   return value
@@ -34,7 +35,7 @@ function textToTipTapJSON(text) {
   };
 }
 
-export default function NoteForm({ open, initialNote, categories, managedCategories = [], onClose, onSubmit }) {
+export default function NoteForm({ open, initialNote, categories, managedCategories = [], projects = [], onClose, onSubmit }) {
   const isEdit = !!initialNote?._id;
 
   const categoryOptions = useMemo(() => {
@@ -56,6 +57,9 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
   const [category, setCategory] = useState('Uncategorized');
   const [isFavorite, setIsFavorite] = useState(false);
   const [tagsInput, setTagsInput] = useState('');
+  const [selectedProjectIds, setSelectedProjectIds] = useState([]);
+  const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const selectorRef = useRef(null);
 
   useEffect(() => {
     if (!open) {
@@ -68,6 +72,8 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
       setCategory('Uncategorized');
       setIsFavorite(false);
       setTagsInput('');
+      setSelectedProjectIds([]);
+      setShowProjectSelector(false);
       return;
     }
     
@@ -92,7 +98,21 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
     setCategory(initialNote?.category || 'Uncategorized');
     setIsFavorite(!!initialNote?.isFavorite);
     setTagsInput((initialNote?.tags || []).join(', '));
+    setSelectedProjectIds(initialNote?.projectIds || []);
   }, [open, initialNote]);
+
+  // Close selector when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (selectorRef.current && !selectorRef.current.contains(event.target)) {
+        setShowProjectSelector(false);
+      }
+    }
+    if (showProjectSelector) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showProjectSelector]);
 
   if (!open) return null;
 
@@ -107,6 +127,7 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
       category: (category || 'Uncategorized').trim(),
       isFavorite,
       tags: normalizeTagsInput(tagsInput),
+      projectIds: selectedProjectIds,
     });
   }
 
@@ -168,6 +189,52 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
                 onChange={(json) => setContent(json)}
                 placeholder="Start writing... Use / for commands, or click the toolbar buttons above."
               />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-slate-700">Projects (optional)</label>
+              <div className="relative" ref={selectorRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowProjectSelector(!showProjectSelector)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-left text-sm text-slate-800 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                  {selectedProjectIds.length === 0
+                    ? 'Select projects...'
+                    : `${selectedProjectIds.length} project${selectedProjectIds.length !== 1 ? 's' : ''} selected`}
+                </button>
+                {showProjectSelector && (
+                  <div className="absolute z-10 w-full mt-1">
+                    <ProjectSelector
+                      selected={selectedProjectIds}
+                      onChange={setSelectedProjectIds}
+                      onClose={() => setShowProjectSelector(false)}
+                    />
+                  </div>
+                )}
+              </div>
+              {selectedProjectIds.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedProjectIds.map((projectId) => {
+                    const project = projects.find((p) => p._id === projectId);
+                    return (
+                      <span
+                        key={projectId}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      >
+                        {project?.name || projectId}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProjectIds(selectedProjectIds.filter((id) => id !== projectId))}
+                          className="text-emerald-600 hover:text-emerald-800"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

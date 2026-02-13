@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { projects as projectsApi, tasks as tasksApi } from '../api/client';
+import { projects as projectsApi, tasks as tasksApi, notes as notesApi } from '../api/client';
 import Loader from '../components/Loader';
+import NoteDetailView from '../components/NoteDetailView';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -52,6 +53,11 @@ export default function ProjectDetail() {
   const [editTaskDueDate, setEditTaskDueDate] = useState('');
   const [editTaskNotes, setEditTaskNotes] = useState('');
   const nameInputRef = useRef(null);
+  const [projectNotes, setProjectNotes] = useState([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [viewingNote, setViewingNote] = useState(null);
+  const [detailViewOpen, setDetailViewOpen] = useState(false);
+  const [includeSubProjectsNotes, setIncludeSubProjectsNotes] = useState(false);
 
   useEffect(() => {
     if (isNew) {
@@ -78,6 +84,26 @@ export default function ProjectDetail() {
           projectsApi.get(projectId),
           tasksApi.list({ projectId }),
         ]);
+        
+        // Load notes for the project
+        if (!cancelled) {
+          try {
+            setLoadingNotes(true);
+            const notesRes = await projectsApi.getNotes(projectId, { includeSubProjects: includeSubProjectsNotes });
+            if (!cancelled) {
+              setProjectNotes(notesRes.data || []);
+            }
+          } catch (err) {
+            if (!cancelled) {
+              console.error('Failed to load notes:', err);
+              setProjectNotes([]);
+            }
+          } finally {
+            if (!cancelled) {
+              setLoadingNotes(false);
+            }
+          }
+        }
         if (cancelled) return;
         const proj = projRes.data;
         if (!proj) {
@@ -98,7 +124,7 @@ export default function ProjectDetail() {
     }
     fetchProject();
     return () => { cancelled = true; };
-  }, [projectId, isNew, navigate, parentIdFromUrl]);
+  }, [projectId, isNew, navigate, parentIdFromUrl, includeSubProjectsNotes]);
 
   useEffect(() => {
     if (isNew && nameInputRef.current) nameInputRef.current.focus();
@@ -700,6 +726,105 @@ export default function ProjectDetail() {
           <p className="text-sm text-slate-500">Add your first task above.</p>
         </div>
       )}
+
+      {/* Notes Section */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-slate-700">Connected Notes</h2>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={includeSubProjectsNotes}
+                onChange={(e) => setIncludeSubProjectsNotes(e.target.checked)}
+                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-200"
+              />
+              Include sub-projects
+            </label>
+          </div>
+        </div>
+        {loadingNotes ? (
+          <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-slate-500">Loading notes...</p>
+          </div>
+        ) : projectNotes.length === 0 ? (
+          <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-slate-600 mb-2">No notes connected to this project.</p>
+            <p className="text-sm text-slate-500">Create a note and connect it to this project.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {projectNotes.map((note) => (
+              <div
+                key={note._id}
+                className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                onClick={() => {
+                  setViewingNote(note);
+                  setDetailViewOpen(true);
+                }}
+              >
+                <h3 className="font-semibold text-slate-800 truncate mb-1">{note.title}</h3>
+                <p className="text-xs text-slate-500 mb-2">
+                  {new Date(note.updatedAt || note.createdAt).toLocaleDateString()}
+                </p>
+                {note.category && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">
+                    {note.category}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <NoteDetailView
+        open={detailViewOpen}
+        note={viewingNote}
+        managedCategories={[]}
+        onClose={() => {
+          setDetailViewOpen(false);
+          setViewingNote(null);
+        }}
+        onEdit={(note) => {
+          navigate(`/notes?edit=${note._id}`);
+        }}
+        onDelete={async (note) => {
+          if (confirm('Are you sure you want to delete this note?')) {
+            try {
+              await notesApi.delete(note._id);
+              setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
+              setDetailViewOpen(false);
+              setViewingNote(null);
+            } catch (err) {
+              console.error('Failed to delete note:', err);
+            }
+          }
+        }}
+        onToggleFavorite={async (note) => {
+          try {
+            await notesApi.toggleFavorite(note._id);
+            setProjectNotes((prev) =>
+              prev.map((n) => (n._id === note._id ? { ...n, isFavorite: !n.isFavorite } : n))
+            );
+            if (viewingNote?._id === note._id) {
+              setViewingNote({ ...viewingNote, isFavorite: !viewingNote.isFavorite });
+            }
+          } catch (err) {
+            console.error('Failed to toggle favorite:', err);
+          }
+        }}
+        onToggleArchive={async (note) => {
+          try {
+            await notesApi.toggleArchive(note._id);
+            setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
+            setDetailViewOpen(false);
+            setViewingNote(null);
+          } catch (err) {
+            console.error('Failed to toggle archive:', err);
+          }
+        }}
+      />
     </div>
   );
 }

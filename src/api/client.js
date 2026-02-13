@@ -51,6 +51,7 @@ export const projects = {
   create: (data) => client.post('/projects', data),
   update: (id, data) => client.put(`/projects/${id}`, data),
   delete: (id) => client.delete(`/projects/${id}`),
+  getNotes: (id, params) => client.get(`/projects/${id}/notes`, { params }),
 };
 
 export const tasks = {
@@ -110,6 +111,7 @@ export const notes = {
   delete: (id) => client.delete(`/notes/${id}`),
   toggleFavorite: (id) => client.put(`/notes/${id}/favorite`),
   toggleArchive: (id) => client.put(`/notes/${id}/archive`),
+  getByProject: (projectId, params) => client.get(`/notes/by-project/${projectId}`, { params }),
   // Categories
   getCategories: (params) => client.get('/notes/categories', { params }),
   createCategory: (data) => client.post('/notes/categories', data),
