@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link, useSearchParams, useNavigate } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { tasks as tasksApi, projects as projectsApi } from '../api/client';
 import ConfirmModal from '../components/ConfirmModal';
+import Loader from '../components/Loader';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -26,6 +27,7 @@ function formatDateDisplay(dateStr) {
 export default function TaskManager() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const tab = searchParams.get('tab') || 'today';
   const [dailyTasks, setDailyTasks] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -33,6 +35,7 @@ export default function TaskManager() {
   const [showArchived, setShowArchived] = useState(false);
   const [date, setDate] = useState(getLocalDateString());
   const [loading, setLoading] = useState(true);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [newTaskRecurrence, setNewTaskRecurrence] = useState('');
@@ -80,21 +83,44 @@ export default function TaskManager() {
   }, [tab]);
 
   useEffect(() => {
+    if (tab !== 'projects') return;
     let cancelled = false;
+
+    // Capture and clear navigation state (new project created)
+    const newProject = location.state?.newProject;
+    if (newProject) {
+      navigate(location.pathname + location.search, { replace: true, state: {} });
+    }
+
     async function fetchProjects() {
+      setProjectsLoading(true);
       try {
         // Only fetch top-level projects (parentId: null)
         const { data } = await projectsApi.list({ includeArchived: true, parentId: 'null' });
         if (!cancelled) {
-          setProjects(data.filter((p) => !p.archived));
+          let active = data.filter((p) => !p.archived);
+          // If the API response doesn't include the just-created project yet, merge it in
+          if (newProject && !newProject.parentId && !active.some((p) => p._id === newProject._id)) {
+            active = [{ ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...active];
+          }
+          setProjects(active);
           setArchivedProjects(data.filter((p) => p.archived));
         }
       } catch {
-        if (!cancelled) setProjects([]);
-        if (!cancelled) setArchivedProjects([]);
+        if (!cancelled) {
+          // On error, at least show the new project if we have one
+          if (newProject && !newProject.parentId) {
+            setProjects([{ ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }]);
+          } else {
+            setProjects([]);
+          }
+          setArchivedProjects([]);
+        }
+      } finally {
+        if (!cancelled) setProjectsLoading(false);
       }
     }
-    if (tab === 'projects') fetchProjects();
+    fetchProjects();
     return () => { cancelled = true; };
   }, [tab]);
 
@@ -527,6 +553,9 @@ export default function TaskManager() {
               New project
             </Link>
           </div>
+          {projectsLoading && projects.length === 0 && (
+            <Loader message="Loading projects..." />
+          )}
           <div className="grid gap-3">
             {filteredProjects.map((project) => {
               const total = project.totalTasks ?? 0;
@@ -577,7 +606,7 @@ export default function TaskManager() {
               );
             })}
           </div>
-          {projects.length === 0 && !loading && (
+          {projects.length === 0 && !projectsLoading && (
             <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
               <p className="text-slate-600 mb-2">No projects yet.</p>
               <p className="text-sm text-slate-500 mb-4">Create a project to group tasks and track progress.</p>

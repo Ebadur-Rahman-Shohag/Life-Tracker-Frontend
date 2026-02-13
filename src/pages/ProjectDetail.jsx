@@ -140,8 +140,10 @@ export default function ProjectDetail() {
     try {
       const payload = { name, description: descriptionInput.trim() };
       if (parentIdFromUrl) payload.parentId = parentIdFromUrl;
-      await projectsApi.create(payload);
-      navigate(parentIdFromUrl ? `/tasks/projects/${parentIdFromUrl}` : '/tasks?tab=projects', { replace: true });
+      const { data: newProject } = await projectsApi.create(payload);
+      // Pass the newly created project via navigation state for instant display
+      const destination = parentIdFromUrl ? `/tasks/projects/${parentIdFromUrl}` : '/tasks?tab=projects';
+      navigate(destination, { replace: true, state: { newProject } });
     } catch (err) {
       console.error(err);
     } finally {
