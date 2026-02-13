@@ -97,10 +97,10 @@ export function useTrackerData({
             // Then, preserve optimistic updates for pending toggles
             prevStats.forEach((day) => {
               const dateKey = toISODateString(day.date);
-              const toggleKey = `${dateKey}`;
 
-              // If there's a pending toggle for this date, preserve the optimistic state
-              if (pendingTogglesRef.current.has(toggleKey)) {
+              // If there's ANY pending toggle for this date, preserve the optimistic state
+              if (hasAnyPendingForDate(dateKey)) {
+                console.log(`[Merge] Preserving optimistic state for ${dateKey}`);
                 merged.set(dateKey, {
                   ...day,
                   date: dateKey,
@@ -171,16 +171,18 @@ export function useTrackerData({
     }
 
     // Set new timeout
-    refreshTimeoutRef.current = setTimeout(() => {
+    refreshTimeoutRef.current = setTimeout(async () => {
       // Only refresh if there are no pending toggles
       if (pendingTogglesRef.current.size === 0) {
-        Promise.all([
-          loadDailyStats(true), // Merge with optimistic updates
-          loadStreakStats(),
-          view === 'year' ? loadMonthlyStats() : Promise.resolve(),
-        ]).catch((err) => {
+        try {
+          await Promise.all([
+            loadDailyStats(true), // Merge with optimistic updates
+            loadStreakStats(),
+            view === 'year' ? loadMonthlyStats() : Promise.resolve(),
+          ]);
+        } catch (err) {
           handleError(err, 'Failed to refresh stats');
-        });
+        }
       }
     }, DEBOUNCE_DELAY_MS);
   }, [loadDailyStats, loadStreakStats, loadMonthlyStats, view, handleError]);
@@ -190,17 +192,32 @@ export function useTrackerData({
   /**
    * Mark a toggle as pending
    */
-  const markTogglePending = useCallback((dateStr) => {
-    const toggleKey = `${dateStr}`;
+  const markTogglePending = useCallback((dateStr, id = null) => {
+    // Use date + id for unique key per toggle, or just date if no id provided
+    const toggleKey = id ? `${dateStr}-${id}` : `${dateStr}`;
     pendingTogglesRef.current.add(toggleKey);
   }, []);
 
   /**
    * Remove a toggle from pending
    */
-  const removeTogglePending = useCallback((dateStr) => {
-    const toggleKey = `${dateStr}`;
+  const removeTogglePending = useCallback((dateStr, id = null) => {
+    // Use date + id for unique key per toggle, or just date if no id provided
+    const toggleKey = id ? `${dateStr}-${id}` : `${dateStr}`;
     pendingTogglesRef.current.delete(toggleKey);
+  }, []);
+
+  /**
+   * Check if any toggle is pending for a date
+   */
+  const hasAnyPendingForDate = useCallback((dateStr) => {
+    // Check if any pending toggle key starts with this date
+    for (const key of pendingTogglesRef.current) {
+      if (key.startsWith(dateStr)) {
+        return true;
+      }
+    }
+    return false;
   }, []);
 
   // ============ CLEANUP ============
@@ -236,5 +253,6 @@ export function useTrackerData({
     // Toggle helpers
     markTogglePending,
     removeTogglePending,
+    hasAnyPendingForDate,
   };
 }

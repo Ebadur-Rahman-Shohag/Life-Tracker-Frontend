@@ -12,7 +12,7 @@ import { toISODateString } from '../lib/dateUtils';
  * @param {Function} config.createNewDayStat - Function to create new day stat: (id, value, dateStr) => newDayStat
  * @param {Function} config.markTogglePending - Function to mark toggle as pending
  * @param {Function} config.removeTogglePending - Function to remove toggle from pending
- * @param {Function} config.debouncedRefresh - Function to trigger debounced refresh
+ * @param {Function} config.debouncedRefresh - Function to trigger debounced refresh (returns Promise)
  * @param {Function} config.onError - Optional error handler
  * @returns {Function} Toggle handler function
  */
@@ -31,10 +31,10 @@ export function useOptimisticToggle({
     async (id, dateStr, value = undefined) => {
       // Store previous state for rollback on error
       const previousStats = [...dailyStats];
-      const toggleKey = `${dateStr}`;
 
-      // Mark this toggle as pending
-      markTogglePending(dateStr);
+      // Mark this toggle as pending (with unique id)
+      markTogglePending(dateStr, id);
+      console.log(`[Toggle] Marked pending: ${dateStr}-${id}`);
 
       // Optimistically update the UI immediately
       setDailyStats((prev) => {
@@ -58,23 +58,33 @@ export function useOptimisticToggle({
       // Make API call in background (non-blocking)
       try {
         // If value is undefined, call apiToggle without it (for habits)
+        let apiResponse;
         if (value === undefined) {
-          await apiToggle(id, dateStr);
+          console.log(`[Toggle] API call - habitId: ${id}, date: ${dateStr}`);
+          apiResponse = await apiToggle(id, dateStr);
         } else {
-          await apiToggle(id, dateStr, value);
+          console.log(`[Toggle] API call - prayerType: ${id}, date: ${dateStr}, value: ${value}`);
+          apiResponse = await apiToggle(id, dateStr, value);
         }
+        console.log(`[Toggle] API response:`, apiResponse.data);
 
-        // Remove from pending toggles
-        removeTogglePending(dateStr);
-
-        // Debounced refresh to prevent rapid overwrites
+        // Trigger debounced refresh FIRST
         debouncedRefresh();
+        
+        // Remove from pending toggles AFTER the debounce delay completes
+        // This ensures the refresh sees the pending state and preserves optimistic updates
+        // Using 350ms (DEBOUNCE_DELAY_MS + 50ms buffer) to ensure refresh executes first
+        setTimeout(() => {
+          console.log(`[Toggle] Removing pending: ${dateStr}-${id}`);
+          removeTogglePending(dateStr, id);
+        }, 350);
       } catch (err) {
         const errorMessage = onError ? onError(err) : 'Failed to toggle. Please try again.';
-        console.error('Failed to toggle:', err);
+        console.error('[Toggle] API call failed:', err);
+        console.error('[Toggle] Error details:', err.response?.data);
 
-        // Remove from pending toggles on error
-        removeTogglePending(dateStr);
+        // Remove from pending toggles on error immediately
+        removeTogglePending(dateStr, id);
 
         // Revert to previous state on error
         setDailyStats(previousStats);
