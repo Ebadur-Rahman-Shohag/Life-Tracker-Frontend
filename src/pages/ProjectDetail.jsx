@@ -255,6 +255,21 @@ export default function ProjectDetail() {
     });
   }
 
+  async function moveSubProject(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= subProjects.length) return;
+
+    const newSubProjects = [...subProjects];
+    [newSubProjects[index], newSubProjects[targetIndex]] = [newSubProjects[targetIndex], newSubProjects[index]];
+
+    try {
+      await projectsApi.reorder(newSubProjects.map((sp) => sp._id));
+      setSubProjects(newSubProjects);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function handleAddTask(e) {
     e.preventDefault();
     const title = newTaskTitle.trim();
@@ -556,35 +571,65 @@ export default function ProjectDetail() {
           <Loader message="Loading sub-projects..." />
         ) : subProjects.length > 0 ? (
           <div className="grid gap-2">
-            {subProjects.map((sp) => {
+            {subProjects.map((sp, index) => {
               const spTotal = sp.totalTasks ?? 0;
               const spCompleted = sp.completedTasks ?? 0;
               const spPercent = spTotal ? Math.round((spCompleted / spTotal) * 100) : 0;
               return (
-                <Link
+                <div
                   key={sp._id}
-                  to={`/tasks/projects/${sp._id}`}
                   className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-3 hover:border-emerald-300 hover:shadow-sm transition-colors"
                 >
-                  <div>
-                    <span className="font-medium text-slate-800">{sp.name}</span>
-                    {sp.subProjectCount > 0 && (
-                      <span className="ml-2 text-xs text-slate-400">({sp.subProjectCount} sub-project{sp.subProjectCount > 1 ? 's' : ''})</span>
-                    )}
+                  <Link
+                    to={`/tasks/projects/${sp._id}`}
+                    className="flex-1 flex items-center justify-between"
+                  >
+                    <div>
+                      <span className="font-medium text-slate-800">{sp.name}</span>
+                      {sp.subProjectCount > 0 && (
+                        <span className="ml-2 text-xs text-slate-400">({sp.subProjectCount} sub-project{sp.subProjectCount > 1 ? 's' : ''})</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-emerald-600 font-medium">{spCompleted}/{spTotal}</span>
+                      <span className="text-slate-500">{spPercent}%</span>
+                      {spTotal > 0 && (
+                        <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500 rounded-full"
+                            style={{ width: `${spPercent}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                  <div className="flex items-center gap-0 ml-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        moveSubProject(index, -1);
+                      }}
+                      disabled={index === 0}
+                      className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
+                      title="Move up"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        moveSubProject(index, 1);
+                      }}
+                      disabled={index === subProjects.length - 1}
+                      className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
+                      title="Move down"
+                    >
+                      ↓
+                    </button>
                   </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-emerald-600 font-medium">{spCompleted}/{spTotal}</span>
-                    <span className="text-slate-500">{spPercent}%</span>
-                    {spTotal > 0 && (
-                      <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 rounded-full"
-                          style={{ width: `${spPercent}%` }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </Link>
+                </div>
               );
             })}
           </div>

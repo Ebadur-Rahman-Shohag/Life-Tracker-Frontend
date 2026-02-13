@@ -283,6 +283,21 @@ export default function TaskManager() {
     });
   }
 
+  async function moveProject(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= projects.length) return;
+
+    const newProjects = [...projects];
+    [newProjects[index], newProjects[targetIndex]] = [newProjects[targetIndex], newProjects[index]];
+
+    try {
+      await projectsApi.reorder(newProjects.map((p) => p._id));
+      setProjects(newProjects);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   const filteredTodayTasks = searchToday.trim()
     ? dailyTasks.filter((t) => t.title.toLowerCase().includes(searchToday.toLowerCase()))
     : dailyTasks;
@@ -557,7 +572,7 @@ export default function TaskManager() {
             <Loader message="Loading projects..." />
           )}
           <div className="grid gap-3">
-            {filteredProjects.map((project) => {
+            {filteredProjects.map((project, index) => {
               const total = project.totalTasks ?? 0;
               const completed = project.completedTasks ?? 0;
               const percent = total ? Math.round((completed / total) * 100) : 0;
@@ -565,17 +580,47 @@ export default function TaskManager() {
               return (
                 <div
                   key={project._id}
-                  onClick={() => navigate(`/tasks/projects/${project._id}`)}
-                  className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors cursor-pointer"
+                  className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <h2 className="font-semibold text-slate-800">{project.name}</h2>
-                    <div className="flex items-center gap-2">
+                    <h2 
+                      onClick={() => navigate(`/tasks/projects/${project._id}`)}
+                      className="font-semibold text-slate-800 cursor-pointer flex-1"
+                    >
+                      {project.name}
+                    </h2>
+                    <div className="flex items-center gap-1">
                       {subCount > 0 && (
                         <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
                           {subCount} sub-project{subCount > 1 ? 's' : ''}
                         </span>
                       )}
+                      <div className="flex items-center gap-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveProject(index, -1);
+                          }}
+                          disabled={index === 0}
+                          className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
+                          title="Move up"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveProject(index, 1);
+                          }}
+                          disabled={index === filteredProjects.length - 1}
+                          className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
+                          title="Move down"
+                        >
+                          ↓
+                        </button>
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => handleDeleteProject(e, project)}
@@ -589,7 +634,10 @@ export default function TaskManager() {
                   {project.description && (
                     <p className="text-sm text-slate-500 mt-1">{project.description}</p>
                   )}
-                  <div className="mt-3 flex items-center gap-2">
+                  <div 
+                    onClick={() => navigate(`/tasks/projects/${project._id}`)}
+                    className="mt-3 flex items-center gap-2 cursor-pointer"
+                  >
                     <span className="text-sm font-medium text-emerald-600">{completed}/{total}</span>
                     <span className="text-sm text-slate-500">tasks</span>
                     <span className="text-sm font-bold text-slate-700">{percent}%</span>

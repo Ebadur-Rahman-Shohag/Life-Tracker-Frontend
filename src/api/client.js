@@ -53,6 +53,7 @@ export const projects = {
   create: (data) => client.post('/projects', data),
   update: (id, data) => client.put(`/projects/${id}`, data),
   delete: (id) => client.delete(`/projects/${id}`),
+  reorder: (projectIds) => client.put('/projects/reorder', { projectIds }),
   getNotes: (id, params) => client.get(`/projects/${id}/notes`, { params }),
 };
 
