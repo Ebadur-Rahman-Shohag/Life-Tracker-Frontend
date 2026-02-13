@@ -22,7 +22,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      <aside className="w-56 bg-white border-r border-slate-200 flex flex-col shrink-0">
+      <aside className="w-56 bg-white border-r border-slate-200 flex flex-col shrink-0 sticky top-0 h-screen">
         <div className="p-4 border-b border-slate-200">
           <Link to="/dashboard" className="text-lg font-semibold text-slate-800">
             Life Tracker
