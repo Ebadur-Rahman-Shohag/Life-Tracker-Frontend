@@ -13,6 +13,7 @@ import { HABIT_MILESTONES, HABIT_COLORS } from '../lib/trackerConstants';
 import { useTrackerData } from '../hooks/useTrackerData';
 import { useOptimisticToggle } from '../hooks/useOptimisticToggle';
 import TrackerTable from '../components/TrackerTable';
+import Loader from '../components/Loader';
 
 // ============ MAIN HABIT TRACKER COMPONENT ============
 
@@ -188,21 +189,26 @@ export default function HabitTracker() {
 
   // Load stats when habits or view changes
   useEffect(() => {
-    if (habits.length > 0 && !loading) {
-      const loadStats = async () => {
-        setDataLoading(true);
-        try {
-          await Promise.all([
-            loadDailyStats(false), // Complete replacement on view change
-            loadMonthlyStats(),
-            loadStreakStats(),
-            loadHabitStreaks(),
-          ]);
-        } finally {
-          setDataLoading(false);
-        }
-      };
-      loadStats();
+    if (!loading) {
+      if (habits.length > 0) {
+        const loadStats = async () => {
+          setDataLoading(true);
+          try {
+            await Promise.all([
+              loadDailyStats(false), // Complete replacement on view change
+              loadMonthlyStats(),
+              loadStreakStats(),
+              loadHabitStreaks(),
+            ]);
+          } finally {
+            setDataLoading(false);
+          }
+        };
+        loadStats();
+      } else {
+        // No habits, so no stats to load - set loading to false immediately
+        setDataLoading(false);
+      }
     }
   }, [
     habits.length,
@@ -333,13 +339,11 @@ export default function HabitTracker() {
   // ============ RENDER ============
 
   if (loading || dataLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[200px] text-slate-500">Loading…</div>
-    );
+    return <Loader message="Loading habits..." />;
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Error Message */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center justify-between">
@@ -358,22 +362,20 @@ export default function HabitTracker() {
         <h1 className="text-2xl font-bold text-slate-800">Habit Tracker</h1>
         <div className="flex items-center gap-3 text-sm">
           <span
-            className={`px-3 py-1 rounded-full font-medium ${
-              (streakStats?.currentStreak || 0) > 0
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'bg-slate-100 text-slate-600'
-            }`}
+            className={`px-3 py-1 rounded-full font-medium ${(streakStats?.currentStreak || 0) > 0
+              ? 'bg-emerald-100 text-emerald-800'
+              : 'bg-slate-100 text-slate-600'
+              }`}
           >
             Streak: {streakStats?.currentStreak || 0} days
           </span>
           <span
-            className={`px-3 py-1 rounded-full font-medium ${
-              todayPercent >= STREAK_THRESHOLD_PERCENTAGE
-                ? 'bg-emerald-100 text-emerald-800'
-                : todayPercent > 0
+            className={`px-3 py-1 rounded-full font-medium ${todayPercent >= STREAK_THRESHOLD_PERCENTAGE
+              ? 'bg-emerald-100 text-emerald-800'
+              : todayPercent > 0
                 ? 'bg-amber-100 text-amber-800'
                 : 'bg-slate-100 text-slate-600'
-            }`}
+              }`}
           >
             Today: {todayPercent}%
           </span>
@@ -384,31 +386,28 @@ export default function HabitTracker() {
       <div className="flex gap-2">
         <button
           onClick={() => setView('week')}
-          className={`px-4 py-2 rounded-lg font-medium ${
-            view === 'week'
-              ? 'bg-emerald-600 text-white'
-              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium ${view === 'week'
+            ? 'bg-emerald-600 text-white'
+            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
         >
           This Week
         </button>
         <button
           onClick={() => setView('month')}
-          className={`px-4 py-2 rounded-lg font-medium ${
-            view === 'month'
-              ? 'bg-emerald-600 text-white'
-              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium ${view === 'month'
+            ? 'bg-emerald-600 text-white'
+            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
         >
           This Month
         </button>
         <button
           onClick={() => setView('year')}
-          className={`px-4 py-2 rounded-lg font-medium ${
-            view === 'year'
-              ? 'bg-emerald-600 text-white'
-              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium ${view === 'year'
+            ? 'bg-emerald-600 text-white'
+            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
         >
           Year Overview
         </button>
@@ -511,9 +510,8 @@ export default function HabitTracker() {
                 ) : (
                   <>
                     <span
-                      className={`w-3 h-3 rounded-full ${
-                        HABIT_COLORS[index % HABIT_COLORS.length].dot
-                      }`}
+                      className={`w-3 h-3 rounded-full ${HABIT_COLORS[index % HABIT_COLORS.length].dot
+                        }`}
                     ></span>
                     <span className="text-lg w-8 text-center">{habit.icon}</span>
                     <span className="flex-1 text-slate-800">{habit.name}</span>
@@ -611,13 +609,12 @@ export default function HabitTracker() {
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all ${
-                          percent >= STREAK_THRESHOLD_PERCENTAGE
-                            ? 'bg-emerald-500'
-                            : percent >= 50
+                        className={`h-full rounded-full transition-all ${percent >= STREAK_THRESHOLD_PERCENTAGE
+                          ? 'bg-emerald-500'
+                          : percent >= 50
                             ? 'bg-amber-500'
                             : 'bg-slate-400'
-                        }`}
+                          }`}
                         style={{ width: `${percent}%` }}
                       />
                     </div>
@@ -655,9 +652,8 @@ export default function HabitTracker() {
             return (
               <div
                 key={milestone}
-                className={`px-3 py-2 rounded-lg text-sm font-medium ${
-                  achieved ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                }`}
+                className={`px-3 py-2 rounded-lg text-sm font-medium ${achieved ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+                  }`}
               >
                 {achieved && '🏆 '}
                 {milestone} days

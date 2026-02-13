@@ -10,17 +10,18 @@ import HabitTracker from './pages/HabitTracker';
 import PrayerTracker from './pages/PrayerTracker';
 import BudgetTracker from './pages/BudgetTracker';
 import Notes from './pages/Notes';
+import Loader from './components/Loader';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading…</div>;
+  if (loading) return <Loader message="Authenticating..." />;
   if (!user) return <Navigate to="/login" replace />;
   return children;
 }
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading…</div>;
+  if (loading) return <Loader message="Authenticating..." />;
   if (user) return <Navigate to="/dashboard" replace />;
   return children;
 }

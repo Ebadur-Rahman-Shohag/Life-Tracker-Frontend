@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { activities as activitiesApi } from '../api/client';
 import { PRAYER_CATEGORIES } from '../lib/categories';
+import Loader from '../components/Loader';
 
 const PRAYER_IDS = ['fajr', 'zuhr', 'asr', 'maghrib', 'isha'];
 
@@ -88,11 +89,7 @@ export default function Reports() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[200px] text-slate-500">
-        Loading…
-      </div>
-    );
+    return <Loader message="Loading reports..." />;
   }
 
   return (
@@ -105,9 +102,8 @@ export default function Reports() {
             key={r}
             type="button"
             onClick={() => setRange(r)}
-            className={`px-4 py-2 rounded-lg font-medium capitalize ${
-              range === r ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-            }`}
+            className={`px-4 py-2 rounded-lg font-medium capitalize ${range === r ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
           >
             {r}
           </button>

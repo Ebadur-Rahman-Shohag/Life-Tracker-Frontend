@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { projects as projectsApi, tasks as tasksApi } from '../api/client';
+import Loader from '../components/Loader';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -66,7 +67,7 @@ export default function ProjectDetail() {
         projectsApi.get(parentIdFromUrl).then(({ data }) => {
           setParentProject(data);
           setParentChain(data.parentChain ? [...data.parentChain, { _id: data._id, name: data.name }] : [{ _id: data._id, name: data.name }]);
-        }).catch(() => {});
+        }).catch(() => { });
       }
       return;
     }
@@ -274,11 +275,7 @@ export default function ProjectDetail() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[200px] text-slate-500">
-        Loading…
-      </div>
-    );
+    return <Loader message="Loading project..." />;
   }
 
   if (isNew) {
@@ -629,9 +626,8 @@ export default function ProjectDetail() {
                   <button
                     type="button"
                     onClick={() => toggleTask(task)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
-                      task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
-                    }`}
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
+                      }`}
                   >
                     {task.completed && '✓'}
                   </button>

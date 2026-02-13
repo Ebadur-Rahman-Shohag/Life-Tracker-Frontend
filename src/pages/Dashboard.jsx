@@ -8,6 +8,7 @@ import { useDashboardData } from '../hooks/useDashboardData';
 import { PRAYER_CATEGORIES } from '../lib/categories';
 import { toISODateString } from '../lib/dateUtils';
 import { TOTAL_DAILY_PRAYERS } from '../lib/trackerConstants';
+import Loader from '../components/Loader';
 
 function getDayStart(d = new Date()) {
   const x = new Date(d);
@@ -70,9 +71,9 @@ export default function Dashboard() {
   // Calculate metrics
   const prayersCount = Object.values(todayPrayers).filter(Boolean).length;
   const prayersPercent = Math.round((prayersCount / TOTAL_DAILY_PRAYERS) * 100);
-  
-  const tasksPercent = tasksData.todayTotal > 0 
-    ? Math.round((tasksData.todayCompleted / tasksData.todayTotal) * 100) 
+
+  const tasksPercent = tasksData.todayTotal > 0
+    ? Math.round((tasksData.todayCompleted / tasksData.todayTotal) * 100)
     : 0;
 
   const habitsPercent = habitsData.todayStats?.percentage || 0;
@@ -117,14 +118,7 @@ export default function Dashboard() {
   });
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px] text-slate-500">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto mb-4"></div>
-          <p>Loading dashboard...</p>
-        </div>
-      </div>
-    );
+    return <Loader message="Loading dashboard..." />;
   }
 
   return (
@@ -325,9 +319,8 @@ export default function Dashboard() {
               </div>
               <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all ${
-                    tasksPercent === 100 ? 'bg-emerald-500' : tasksPercent > 0 ? 'bg-amber-500' : 'bg-slate-300'
-                  }`}
+                  className={`h-full rounded-full transition-all ${tasksPercent === 100 ? 'bg-emerald-500' : tasksPercent > 0 ? 'bg-amber-500' : 'bg-slate-300'
+                    }`}
                   style={{ width: `${tasksPercent}%` }}
                 />
               </div>
@@ -408,9 +401,8 @@ export default function Dashboard() {
               </div>
               <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all ${
-                    habitsPercent >= 75 ? 'bg-emerald-500' : habitsPercent > 0 ? 'bg-amber-500' : 'bg-slate-300'
-                  }`}
+                  className={`h-full rounded-full transition-all ${habitsPercent >= 75 ? 'bg-emerald-500' : habitsPercent > 0 ? 'bg-amber-500' : 'bg-slate-300'
+                    }`}
                   style={{ width: `${habitsPercent}%` }}
                 />
               </div>

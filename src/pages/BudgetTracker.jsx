@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { budget as budgetApi } from '../api/client';
 import { toISODateString, getTodayDate } from '../lib/dateUtils';
+import Loader from '../components/Loader';
 import TransactionForm from '../components/TransactionForm';
 import CategoryCard from '../components/CategoryCard';
 import CategoryForm from '../components/CategoryForm';
@@ -44,7 +45,7 @@ export default function BudgetTracker() {
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [categoryFormType, setCategoryFormType] = useState('expense');
-  
+
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
@@ -223,9 +224,9 @@ export default function BudgetTracker() {
       return response.data;
     } catch (err) {
       console.error('Error saving category:', err);
-      const errorMessage = err.response?.data?.message || 
-                           err.response?.data?.errors?.[0]?.msg || 
-                           'Error saving category. Please try again.';
+      const errorMessage = err.response?.data?.message ||
+        err.response?.data?.errors?.[0]?.msg ||
+        'Error saving category. Please try again.';
       alert(errorMessage);
       throw err;
     }
@@ -284,7 +285,7 @@ export default function BudgetTracker() {
     const handleKeyPress = (e) => {
       // Only trigger if not typing in an input/textarea
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      
+
       if (e.key === 'e' || e.key === 'E') {
         e.preventDefault();
         setTransactionType('expense');
@@ -310,24 +311,20 @@ export default function BudgetTracker() {
       .filter(t => t.type === type)
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 3);
-    
+
     const categoryIds = [...new Set(recentTransactions.map(t => t.categoryId?._id || t.categoryId))];
     return categories.filter(c => categoryIds.includes(c._id));
   }, [transactions, categories]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-slate-500">Loading budget data...</div>
-      </div>
-    );
+    return <Loader message="Loading budget data..." />;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">Budget & Finance</h1>
+        <h1 className="text-2xl font- bold text-slate-800">Budget & Finance</h1>
         <p className="text-sm text-slate-600 mt-1">Track your income and expenses</p>
       </div>
 
@@ -337,11 +334,10 @@ export default function BudgetTracker() {
           <button
             key={p}
             onClick={() => setPeriod(p)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              period === p
-                ? 'bg-emerald-100 text-emerald-700'
-                : 'bg-white text-slate-600 hover:bg-slate-100'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${period === p
+              ? 'bg-emerald-100 text-emerald-700'
+              : 'bg-white text-slate-600 hover:bg-slate-100'
+              }`}
           >
             {p === 'week' ? 'This Week' : p === 'month' ? 'This Month' : 'This Year'}
           </button>
@@ -380,11 +376,10 @@ export default function BudgetTracker() {
               return (
                 <div
                   key={cat.categoryId}
-                  className={`p-3 rounded-lg border-2 ${
-                    cat.percentage >= 100
-                      ? 'bg-red-50 border-red-300'
-                      : 'bg-yellow-50 border-yellow-300'
-                  }`}
+                  className={`p-3 rounded-lg border-2 ${cat.percentage >= 100
+                    ? 'bg-red-50 border-red-300'
+                    : 'bg-yellow-50 border-yellow-300'
+                    }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -490,7 +485,7 @@ export default function BudgetTracker() {
               };
               const hasBudget = category.budgetLimit && category.budgetLimit > 0;
               const percentage = categoryData.percentage || 0;
-              
+
               const getProgressColor = () => {
                 if (percentage >= 100) return 'bg-red-500';
                 if (percentage >= 80) return 'bg-yellow-500';
@@ -516,7 +511,7 @@ export default function BudgetTracker() {
                       )}
                     </div>
                   </div>
-                  
+
                   {hasBudget ? (
                     <>
                       <div className="mb-3">
@@ -734,21 +729,19 @@ export default function BudgetTracker() {
             <div className="flex gap-2">
               <button
                 onClick={() => setChartType('pie')}
-                className={`px-3 py-1 rounded text-sm transition-colors ${
-                  chartType === 'pie' 
-                    ? 'bg-emerald-100 text-emerald-700' 
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
+                className={`px-3 py-1 rounded text-sm transition-colors ${chartType === 'pie'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
               >
                 Pie Chart
               </button>
               <button
                 onClick={() => setChartType('bar')}
-                className={`px-3 py-1 rounded text-sm transition-colors ${
-                  chartType === 'bar' 
-                    ? 'bg-emerald-100 text-emerald-700' 
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
+                className={`px-3 py-1 rounded text-sm transition-colors ${chartType === 'bar'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
               >
                 Bar Chart
               </button>

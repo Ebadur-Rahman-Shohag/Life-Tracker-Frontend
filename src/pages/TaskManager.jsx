@@ -187,7 +187,7 @@ export default function TaskManager() {
       // because the backend has constraints (can't have both date and recurrenceRule)
       const currentRecurrence = task.recurrenceRule || '';
       const recurrenceChanged = currentRecurrence !== editTaskRecurrence;
-      
+
       if (recurrenceChanged) {
         // Need to delete and recreate the task
         await tasksApi.delete(task._id);
@@ -247,10 +247,10 @@ export default function TaskManager() {
     : dailyTasks;
   const filteredProjects = searchProjects.trim()
     ? projects.filter(
-        (p) =>
-          p.name.toLowerCase().includes(searchProjects.toLowerCase()) ||
-          (p.description || '').toLowerCase().includes(searchProjects.toLowerCase())
-      )
+      (p) =>
+        p.name.toLowerCase().includes(searchProjects.toLowerCase()) ||
+        (p.description || '').toLowerCase().includes(searchProjects.toLowerCase())
+    )
     : projects;
 
   const completedCount = dailyTasks.filter((t) => t.completed).length;
@@ -258,25 +258,23 @@ export default function TaskManager() {
   const completedPercent = totalCount ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold text-slate-800 mb-4">Task Manager</h1>
 
       <div className="flex gap-2 mb-6">
         <button
           type="button"
           onClick={() => setSearchParams({ tab: 'today' })}
-          className={`px-4 py-2 rounded-lg font-medium ${
-            tab === 'today' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium ${tab === 'today' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
         >
           Today
         </button>
         <button
           type="button"
           onClick={() => setSearchParams({ tab: 'projects' })}
-          className={`px-4 py-2 rounded-lg font-medium ${
-            tab === 'projects' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium ${tab === 'projects' ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
         >
           Projects
         </button>
@@ -426,9 +424,8 @@ export default function TaskManager() {
                   <button
                     type="button"
                     onClick={() => toggleDailyTask(task)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
-                      task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
-                    }`}
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
+                      }`}
                   >
                     {task.completed && '✓'}
                   </button>

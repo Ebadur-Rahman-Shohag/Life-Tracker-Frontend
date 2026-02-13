@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { notes as notesApi } from '../api/client';
+import Loader from '../components/Loader';
 import NoteForm from '../components/NoteForm';
 import NoteCategoryForm from '../components/NoteCategoryForm';
 import NoteDetailView from '../components/NoteDetailView';
@@ -72,11 +73,10 @@ function NoteCard({ note, onView, onEdit, onDelete, onToggleFavorite, onToggleAr
             e.stopPropagation();
             onToggleFavorite(note);
           }}
-          className={`shrink-0 px-2 py-1 rounded-lg text-sm border transition-colors ${
-            note.isFavorite
-              ? 'bg-amber-50 border-amber-200 text-amber-700'
-              : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-          }`}
+          className={`shrink-0 px-2 py-1 rounded-lg text-sm border transition-colors ${note.isFavorite
+            ? 'bg-amber-50 border-amber-200 text-amber-700'
+            : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
           title={note.isFavorite ? 'Unfavorite' : 'Favorite'}
         >
           ★
@@ -381,11 +381,11 @@ export default function Notes() {
   }, [categories, stats, managedCategories]);
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-[200px] text-slate-500">Loading…</div>;
+    return <Loader message="Loading notes..." />;
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center justify-between">
           <span>{error}</span>
@@ -444,11 +444,10 @@ export default function Notes() {
                       if (item.id === 'favorites') setMode('favorites');
                       if (item.id === 'archived') setMode('archived');
                     }}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-emerald-50 text-emerald-700'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-                    }`}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+                      }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {item.icon && <span className="text-base shrink-0">{item.icon}</span>}
@@ -480,31 +479,28 @@ export default function Notes() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setMode('gallery')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium border ${
-                  mode === 'gallery'
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                }`}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border ${mode === 'gallery'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
               >
                 Gallery
               </button>
               <button
                 onClick={() => setMode('favorites')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium border ${
-                  mode === 'favorites'
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                }`}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border ${mode === 'favorites'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
               >
                 Favourite
               </button>
               <button
                 onClick={() => setMode('archived')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium border ${
-                  mode === 'archived'
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                }`}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border ${mode === 'archived'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
               >
                 Archive
               </button>
