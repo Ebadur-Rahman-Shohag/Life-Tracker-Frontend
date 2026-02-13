@@ -3,12 +3,15 @@ import { Link } from 'react-router-dom';
 import { prayers as prayersApi } from '../api/client';
 import PrayerChecklist from '../components/PrayerChecklist';
 import SummaryCard from '../components/SummaryCard';
-import MiniTrendChart from '../components/MiniTrendChart';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { PRAYER_CATEGORIES } from '../lib/categories';
 import { toISODateString } from '../lib/dateUtils';
 import { TOTAL_DAILY_PRAYERS } from '../lib/trackerConstants';
 import Loader from '../components/Loader';
+
+// Lazy load chart component to reduce initial bundle
+import { lazy, Suspense } from 'react';
+const MiniTrendChart = lazy(() => import('../components/MiniTrendChart'));
 
 function getDayStart(d = new Date()) {
   const x = new Date(d);
@@ -241,12 +244,14 @@ export default function Dashboard() {
               View →
             </Link>
           </div>
-          <MiniTrendChart
-            data={prayerTrendData}
-            type="bar"
-            height={120}
-            color="#059669"
-          />
+          <Suspense fallback={<div className="h-[120px] bg-slate-50 animate-pulse rounded" />}>
+            <MiniTrendChart
+              data={prayerTrendData}
+              type="bar"
+              height={120}
+              color="#059669"
+            />
+          </Suspense>
           <div className="mt-2 text-xs text-slate-500 text-center">
             Last 7 days completion %
           </div>
@@ -262,12 +267,14 @@ export default function Dashboard() {
               View →
             </Link>
           </div>
-          <MiniTrendChart
-            data={habitTrendData}
-            type="line"
-            height={120}
-            color="#3b82f6"
-          />
+          <Suspense fallback={<div className="h-[120px] bg-slate-50 animate-pulse rounded" />}>
+            <MiniTrendChart
+              data={habitTrendData}
+              type="line"
+              height={120}
+              color="#3b82f6"
+            />
+          </Suspense>
           <div className="mt-2 text-xs text-slate-500 text-center">
             Last 7 days completion %
           </div>
@@ -283,12 +290,14 @@ export default function Dashboard() {
               View →
             </Link>
           </div>
-          <MiniTrendChart
-            data={taskTrendData}
-            type="bar"
-            height={120}
-            color="#f59e0b"
-          />
+          <Suspense fallback={<div className="h-[120px] bg-slate-50 animate-pulse rounded" />}>
+            <MiniTrendChart
+              data={taskTrendData}
+              type="bar"
+              height={120}
+              color="#f59e0b"
+            />
+          </Suspense>
           <div className="mt-2 text-xs text-slate-500 text-center">
             Today&apos;s completion
           </div>

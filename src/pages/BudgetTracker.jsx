@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { budget as budgetApi } from '../api/client';
 import { toISODateString, getTodayDate } from '../lib/dateUtils';
 import Loader from '../components/Loader';
@@ -6,8 +6,10 @@ import TransactionForm from '../components/TransactionForm';
 import CategoryCard from '../components/CategoryCard';
 import CategoryForm from '../components/CategoryForm';
 import TransactionList from '../components/TransactionList';
-import BudgetChart from '../components/BudgetChart';
 import ConfirmModal from '../components/ConfirmModal';
+
+// Lazy load chart component
+const BudgetChart = lazy(() => import('../components/BudgetChart'));
 
 const DEFAULT_EXPENSE_CATEGORIES = [
   { name: 'Groceries', icon: '🛒', color: '#10b981' },
@@ -791,7 +793,9 @@ export default function BudgetTracker() {
               </button>
             </div>
           </div>
-          <BudgetChart summary={summary} type={chartType} />
+          <Suspense fallback={<div className="h-[300px] bg-slate-50 animate-pulse rounded flex items-center justify-center"><span className="text-slate-400">Loading chart...</span></div>}>
+            <BudgetChart summary={summary} type={chartType} />
+          </Suspense>
         </div>
       )}
 

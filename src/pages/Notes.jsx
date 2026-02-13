@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { notes as notesApi, projects as projectsApi } from '../api/client';
 import Loader from '../components/Loader';
-import NoteForm from '../components/NoteForm';
-import NoteCategoryForm from '../components/NoteCategoryForm';
-import NoteDetailView from '../components/NoteDetailView';
 import ConfirmModal from '../components/ConfirmModal';
+
+// Lazy load heavy components
+const NoteForm = lazy(() => import('../components/NoteForm'));
+const NoteCategoryForm = lazy(() => import('../components/NoteCategoryForm'));
+const NoteDetailView = lazy(() => import('../components/NoteDetailView'));
 
 function formatTimestamp(iso) {
   try {
@@ -639,34 +641,36 @@ export default function Notes() {
         </section>
       </div>
 
-      <NoteForm
-        open={formOpen}
-        initialNote={editingNote}
-        categories={categories}
-        managedCategories={managedCategories}
-        projects={projects}
-        onClose={closeForm}
-        onSubmit={handleSave}
-      />
+      <Suspense fallback={null}>
+        <NoteForm
+          open={formOpen}
+          initialNote={editingNote}
+          categories={categories}
+          managedCategories={managedCategories}
+          projects={projects}
+          onClose={closeForm}
+          onSubmit={handleSave}
+        />
 
-      <NoteCategoryForm
-        open={categoryFormOpen}
-        category={editingCategory}
-        onClose={closeCategoryForm}
-        onSubmit={handleCategorySubmit}
-        onDelete={handleDeleteCategory}
-      />
+        <NoteCategoryForm
+          open={categoryFormOpen}
+          category={editingCategory}
+          onClose={closeCategoryForm}
+          onSubmit={handleCategorySubmit}
+          onDelete={handleDeleteCategory}
+        />
 
-      <NoteDetailView
-        open={detailViewOpen}
-        note={viewingNote}
-        managedCategories={managedCategories}
-        onClose={closeDetailView}
-        onEdit={openEditNote}
-        onDelete={handleDelete}
-        onToggleFavorite={handleToggleFavorite}
-        onToggleArchive={handleToggleArchive}
-      />
+        <NoteDetailView
+          open={detailViewOpen}
+          note={viewingNote}
+          managedCategories={managedCategories}
+          onClose={closeDetailView}
+          onEdit={openEditNote}
+          onDelete={handleDelete}
+          onToggleFavorite={handleToggleFavorite}
+          onToggleArchive={handleToggleArchive}
+        />
+      </Suspense>
 
       {confirmModal && (
         <ConfirmModal

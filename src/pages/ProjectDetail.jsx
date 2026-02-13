@@ -87,19 +87,18 @@ export default function ProjectDetail() {
     // Reset adding state when viewing an existing project
     setAdding(false);
     
-    // Check if we have a newly created sub-project in navigation state
+    // Capture and clear navigation state (new sub-project created)
     const newSubProject = location.state?.newProject;
-    if (newSubProject && newSubProject.parentId === projectId) {
-      // Optimistically add the new sub-project to the list
-      setSubProjects((prev) => {
-        if (prev.some((sp) => sp._id === newSubProject._id)) return prev;
-        return [{ ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...prev];
-      });
-      // Clear the navigation state
+    if (newSubProject) {
       navigate(location.pathname + location.search, { replace: true, state: {} });
     }
     
     async function fetchProject() {
+      // Set loading state if we have a new sub-project to show smooth transition
+      if (newSubProject && newSubProject.parentId === projectId) {
+        setSubProjectsLoading(true);
+      }
+      
       try {
         const [projRes, tasksRes] = await Promise.all([
           projectsApi.get(projectId),
@@ -116,12 +115,28 @@ export default function ProjectDetail() {
         setNameInput(proj.name);
         setDescriptionInput(proj.description || '');
         setProjectTasks(tasksRes.data);
-        setSubProjects(proj.subProjects || []);
+        
+        // Merge new sub-project with fetched data (same pattern as TaskManager)
+        let subProjectsList = proj.subProjects || [];
+        if (newSubProject && newSubProject.parentId === projectId && !subProjectsList.some((sp) => sp._id === newSubProject._id)) {
+          // API response doesn't include the just-created sub-project yet, merge it in
+          subProjectsList = [{ ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...subProjectsList];
+        }
+        setSubProjects(subProjectsList);
         setParentChain(proj.parentChain || []);
       } catch {
-        if (!cancelled) navigate('/tasks?tab=projects');
+        if (!cancelled) {
+          // On error, at least show the new sub-project if we have one
+          if (newSubProject && newSubProject.parentId === projectId) {
+            setSubProjects([{ ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }]);
+          }
+          navigate('/tasks?tab=projects');
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setSubProjectsLoading(false);
+        }
       }
     }
     fetchProject();
@@ -538,9 +553,7 @@ export default function ProjectDetail() {
           </Link>
         </div>
         {subProjectsLoading ? (
-          <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-200">
-            <p className="text-slate-500 text-sm">Loading sub-projects...</p>
-          </div>
+          <Loader message="Loading sub-projects..." />
         ) : subProjects.length > 0 ? (
           <div className="grid gap-2">
             {subProjects.map((sp) => {
