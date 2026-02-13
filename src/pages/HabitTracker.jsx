@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { habits as habitsApi } from '../api/client';
+import ConfirmModal from '../components/ConfirmModal';
 import {
   formatDate,
   getWeekDates,
@@ -41,6 +42,7 @@ export default function HabitTracker() {
   const [editingHabitId, setEditingHabitId] = useState(null);
   const [editHabitName, setEditHabitName] = useState('');
   const [editHabitIcon, setEditHabitIcon] = useState('');
+  const [confirmModal, setConfirmModal] = useState(null);
 
   // ============ COMPUTED VALUES ============
   const currentYear = currentDate.getFullYear();
@@ -275,15 +277,28 @@ export default function HabitTracker() {
   /**
    * Handle delete habit
    */
-  const handleDeleteHabit = async (id) => {
-    if (!confirm('Delete this habit and all its entries?')) return;
-    try {
-      await habitsApi.delete(id);
-      await loadHabits();
-    } catch (err) {
-      console.error('Failed to delete habit:', err);
-      setError('Failed to delete habit. Please try again.');
-    }
+  const handleDeleteHabit = (id) => {
+    const habit = habits.find((h) => h._id === id);
+    setConfirmModal({
+      open: true,
+      title: 'Delete Habit',
+      message: `Are you sure you want to delete "${habit?.name || 'this habit'}"? This will also delete all its entries. This action cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await habitsApi.delete(id);
+          await loadHabits();
+          setConfirmModal(null);
+        } catch (err) {
+          console.error('Failed to delete habit:', err);
+          setError('Failed to delete habit. Please try again.');
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   };
 
   /**
@@ -669,6 +684,19 @@ export default function HabitTracker() {
           <p className="text-slate-600 mb-2">No habits yet.</p>
           <p className="text-sm text-slate-500">Add your first habit above to start tracking your progress.</p>
         </div>
+      )}
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
+        />
       )}
     </div>
   );

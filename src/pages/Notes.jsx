@@ -4,6 +4,7 @@ import Loader from '../components/Loader';
 import NoteForm from '../components/NoteForm';
 import NoteCategoryForm from '../components/NoteCategoryForm';
 import NoteDetailView from '../components/NoteDetailView';
+import ConfirmModal from '../components/ConfirmModal';
 
 function formatTimestamp(iso) {
   try {
@@ -179,6 +180,7 @@ export default function Notes() {
   const [editingCategory, setEditingCategory] = useState(null);
   const [detailViewOpen, setDetailViewOpen] = useState(false);
   const [viewingNote, setViewingNote] = useState(null);
+  const [confirmModal, setConfirmModal] = useState(null);
 
   const categories = useMemo(() => buildCategoryList(managedCategories, stats), [managedCategories, stats]);
 
@@ -327,16 +329,28 @@ export default function Notes() {
     }
   }
 
-  async function handleDelete(note) {
-    if (!confirm('Delete this note?')) return;
-    try {
-      await notesApi.delete(note._id);
-      await Promise.all([loadStats(), loadNotes({ search })]);
-      closeDetailView(); // Close detail view if open
-    } catch (err) {
-      console.error(err);
-      setError('Failed to delete note. Please try again.');
-    }
+  function handleDelete(note) {
+    setConfirmModal({
+      open: true,
+      title: 'Delete Note',
+      message: `Are you sure you want to delete "${note.title}"? This action cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await notesApi.delete(note._id);
+          await Promise.all([loadStats(), loadNotes({ search })]);
+          closeDetailView(); // Close detail view if open
+          setConfirmModal(null);
+        } catch (err) {
+          console.error(err);
+          setError('Failed to delete note. Please try again.');
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   }
 
   async function handleToggleFavorite(note) {
@@ -394,16 +408,29 @@ export default function Notes() {
     }
   }
 
-  async function handleDeleteCategory(id) {
-    if (!confirm('Are you sure you want to delete this category?')) return;
-    try {
-      await notesApi.deleteCategory(id);
-      await loadCategories();
-      await loadStats();
-    } catch (err) {
-      console.error(err);
-      setError('Failed to delete category. Please try again.');
-    }
+  function handleDeleteCategory(id) {
+    const category = managedCategories.find((c) => c._id === id);
+    setConfirmModal({
+      open: true,
+      title: 'Delete Category',
+      message: `Are you sure you want to delete "${category?.name || 'this category'}"? Notes using this category will keep it, but you won't be able to use it for new notes.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await notesApi.deleteCategory(id);
+          await loadCategories();
+          await loadStats();
+          setConfirmModal(null);
+        } catch (err) {
+          console.error(err);
+          setError('Failed to delete category. Please try again.');
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   }
 
   const sidebarItems = useMemo(() => {
@@ -635,6 +662,19 @@ export default function Notes() {
         onToggleFavorite={handleToggleFavorite}
         onToggleArchive={handleToggleArchive}
       />
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
+        />
+      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import ConfirmModal from './ConfirmModal';
 
 const CATEGORY_ICONS = [
   '🛒', '🏠', '🍽️', '🚗', '🛍️', '💡', '🔄', '🎯', '🏥', '📚', '💅', '📦',
@@ -20,6 +21,8 @@ export default function CategoryForm({ category, type, onClose, onSubmit, onDele
     color: '#10b981',
     budgetLimit: '',
   });
+  const [confirmModal, setConfirmModal] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (category) {
@@ -35,9 +38,10 @@ export default function CategoryForm({ category, type, onClose, onSubmit, onDele
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!formData.name.trim()) {
-      alert('Please enter a category name.');
+      setError('Please enter a category name.');
       return;
     }
+    setError(null);
 
     // Only include budgetLimit for expense categories and if it has a value
     const submitData = {
@@ -74,6 +78,11 @@ export default function CategoryForm({ category, type, onClose, onSubmit, onDele
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-800 px-3 py-2 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
               <input
@@ -164,9 +173,19 @@ export default function CategoryForm({ category, type, onClose, onSubmit, onDele
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm('Are you sure you want to delete this category? This will not delete transactions, but you won\'t be able to use this category for new transactions.')) {
-                      onDelete(category._id);
-                    }
+                    setConfirmModal({
+                      open: true,
+                      title: 'Delete Category',
+                      message: 'Are you sure you want to delete this category? This will not delete transactions, but you won\'t be able to use this category for new transactions.',
+                      confirmText: 'Delete',
+                      cancelText: 'Cancel',
+                      variant: 'danger',
+                      onConfirm: () => {
+                        onDelete(category._id);
+                        setConfirmModal(null);
+                      },
+                      onCancel: () => setConfirmModal(null),
+                    });
                   }}
                   className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
                 >
@@ -194,6 +213,19 @@ export default function CategoryForm({ category, type, onClose, onSubmit, onDele
           </form>
         </div>
       </div>
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
+        />
+      )}
     </div>
   );
 }

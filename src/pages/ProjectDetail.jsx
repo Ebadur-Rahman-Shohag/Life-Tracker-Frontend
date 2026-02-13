@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { projects as projectsApi, tasks as tasksApi, notes as notesApi } from '../api/client';
 import Loader from '../components/Loader';
 import NoteDetailView from '../components/NoteDetailView';
+import ConfirmModal from '../components/ConfirmModal';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -58,6 +59,7 @@ export default function ProjectDetail() {
   const [viewingNote, setViewingNote] = useState(null);
   const [detailViewOpen, setDetailViewOpen] = useState(false);
   const [includeSubProjectsNotes, setIncludeSubProjectsNotes] = useState(false);
+  const [confirmModal, setConfirmModal] = useState(null);
 
   useEffect(() => {
     if (isNew) {
@@ -174,7 +176,7 @@ export default function ProjectDetail() {
     }
   }
 
-  async function handleDeleteProject() {
+  function handleDeleteProject() {
     if (!project || isNew) return;
     const subCount = subProjects.length;
     const taskCount = projectTasks.length;
@@ -183,15 +185,28 @@ export default function ProjectDetail() {
       : taskCount > 0
         ? `Are you sure you want to delete "${project.name}" and its ${taskCount} task(s)?`
         : `Are you sure you want to delete "${project.name}"?`;
-    if (!window.confirm(message)) return;
-    try {
-      await projectsApi.delete(project._id);
-      // Navigate to parent project or task manager
-      const destination = parentChain.length > 0 ? `/tasks/projects/${parentChain[parentChain.length - 1]._id}` : '/tasks?tab=projects';
-      navigate(destination);
-    } catch (err) {
-      console.error(err);
-    }
+    
+    setConfirmModal({
+      open: true,
+      title: 'Delete Project',
+      message: message,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await projectsApi.delete(project._id);
+          // Navigate to parent project or task manager
+          const destination = parentChain.length > 0 ? `/tasks/projects/${parentChain[parentChain.length - 1]._id}` : '/tasks?tab=projects';
+          navigate(destination);
+          setConfirmModal(null);
+        } catch (err) {
+          console.error(err);
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   }
 
   async function handleAddTask(e) {
@@ -789,17 +804,28 @@ export default function ProjectDetail() {
         onEdit={(note) => {
           navigate(`/notes?edit=${note._id}`);
         }}
-        onDelete={async (note) => {
-          if (confirm('Are you sure you want to delete this note?')) {
-            try {
-              await notesApi.delete(note._id);
-              setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
-              setDetailViewOpen(false);
-              setViewingNote(null);
-            } catch (err) {
-              console.error('Failed to delete note:', err);
-            }
-          }
+        onDelete={(note) => {
+          setConfirmModal({
+            open: true,
+            title: 'Delete Note',
+            message: `Are you sure you want to delete "${note.title}"? This action cannot be undone.`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            variant: 'danger',
+            onConfirm: async () => {
+              try {
+                await notesApi.delete(note._id);
+                setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
+                setDetailViewOpen(false);
+                setViewingNote(null);
+                setConfirmModal(null);
+              } catch (err) {
+                console.error('Failed to delete note:', err);
+                setConfirmModal(null);
+              }
+            },
+            onCancel: () => setConfirmModal(null),
+          });
         }}
         onToggleFavorite={async (note) => {
           try {
@@ -825,6 +851,19 @@ export default function ProjectDetail() {
           }
         }}
       />
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
+        />
+      )}
     </div>
   );
 }

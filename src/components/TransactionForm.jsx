@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { toISODateString, getTodayDate } from '../lib/dateUtils';
 import CategoryForm from './CategoryForm';
+import ConfirmModal from './ConfirmModal';
 
 export default function TransactionForm({ categories, type, transaction, preselectedCategoryId, onClose, onSubmit, onCategoryCreated }) {
   const getInitialCategoryId = () => {
@@ -19,6 +20,7 @@ export default function TransactionForm({ categories, type, transaction, presele
     notes: '',
   });
   const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (transaction) {
@@ -45,10 +47,10 @@ export default function TransactionForm({ categories, type, transaction, presele
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!formData.categoryId || !formData.amount || parseFloat(formData.amount) <= 0) {
-      alert('Please fill in all required fields with valid values.');
+      setError('Please fill in all required fields with valid values.');
       return;
     }
-
+    setError(null);
     onSubmit({
       date: formData.date,
       type,
@@ -76,6 +78,11 @@ export default function TransactionForm({ categories, type, transaction, presele
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-800 px-3 py-2 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
               <input
@@ -202,7 +209,7 @@ export default function TransactionForm({ categories, type, transaction, presele
               setShowCategoryForm(false);
             } catch (err) {
               console.error('Error creating category:', err);
-              alert(err.response?.data?.message || 'Error creating category. Please try again.');
+              setError(err.response?.data?.message || 'Error creating category. Please try again.');
             }
           }}
         />

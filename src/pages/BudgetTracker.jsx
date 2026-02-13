@@ -7,6 +7,7 @@ import CategoryCard from '../components/CategoryCard';
 import CategoryForm from '../components/CategoryForm';
 import TransactionList from '../components/TransactionList';
 import BudgetChart from '../components/BudgetChart';
+import ConfirmModal from '../components/ConfirmModal';
 
 const DEFAULT_EXPENSE_CATEGORIES = [
   { name: 'Groceries', icon: '🛒', color: '#10b981' },
@@ -53,6 +54,8 @@ export default function BudgetTracker() {
   const [sortBy, setSortBy] = useState('date');
   const [showTransactions, setShowTransactions] = useState(false);
   const [chartType, setChartType] = useState('pie');
+  const [error, setError] = useState(null);
+  const [confirmModal, setConfirmModal] = useState(null);
 
   // Get date range based on period
   const getDateRange = useCallback(() => {
@@ -188,20 +191,33 @@ export default function BudgetTracker() {
       await loadTransactions();
     } catch (err) {
       console.error('Error saving transaction:', err);
-      alert('Error saving transaction. Please try again.');
+      setError('Error saving transaction. Please try again.');
     }
   };
 
-  const handleDeleteTransaction = async (id) => {
-    if (!confirm('Are you sure you want to delete this transaction?')) return;
-    try {
-      await budgetApi.deleteTransaction(id);
-      await loadSummary();
-      await loadTransactions();
-    } catch (err) {
-      console.error('Error deleting transaction:', err);
-      alert('Error deleting transaction. Please try again.');
-    }
+  const handleDeleteTransaction = (id) => {
+    const transaction = transactions.find((t) => t._id === id);
+    setConfirmModal({
+      open: true,
+      title: 'Delete Transaction',
+      message: `Are you sure you want to delete this transaction? This action cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await budgetApi.deleteTransaction(id);
+          await loadSummary();
+          await loadTransactions();
+          setConfirmModal(null);
+        } catch (err) {
+          console.error('Error deleting transaction:', err);
+          setError('Error deleting transaction. Please try again.');
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   };
 
   const handleEditTransaction = (transaction) => {
@@ -227,20 +243,33 @@ export default function BudgetTracker() {
       const errorMessage = err.response?.data?.message ||
         err.response?.data?.errors?.[0]?.msg ||
         'Error saving category. Please try again.';
-      alert(errorMessage);
+      setError(errorMessage);
       throw err;
     }
   };
 
-  const handleDeleteCategory = async (id) => {
-    if (!confirm('Are you sure you want to delete this category? This will not delete transactions, but you won\'t be able to use this category for new transactions.')) return;
-    try {
-      await budgetApi.deleteCategory(id);
-      await loadCategories();
-    } catch (err) {
-      console.error('Error deleting category:', err);
-      alert('Error deleting category. Please try again.');
-    }
+  const handleDeleteCategory = (id) => {
+    const category = categories.find((c) => c._id === id);
+    setConfirmModal({
+      open: true,
+      title: 'Delete Category',
+      message: `Are you sure you want to delete "${category?.name || 'this category'}"? This will not delete transactions, but you won't be able to use this category for new transactions.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await budgetApi.deleteCategory(id);
+          await loadCategories();
+          setConfirmModal(null);
+        } catch (err) {
+          console.error('Error deleting category:', err);
+          setError('Error deleting category. Please try again.');
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   };
 
   const expenseCategories = categories.filter(c => c.type === 'expense');
@@ -256,7 +285,7 @@ export default function BudgetTracker() {
   // Export to CSV
   const exportToCSV = () => {
     if (transactions.length === 0) {
-      alert('No transactions to export');
+      setError('No transactions to export');
       return;
     }
     const headers = ['Date', 'Type', 'Category', 'Description', 'Amount'];
@@ -322,6 +351,14 @@ export default function BudgetTracker() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="text-red-600 hover:text-red-800 font-medium">
+            ×
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div>
         <h1 className="text-2xl font- bold text-slate-800">Budget & Finance</h1>
@@ -877,6 +914,19 @@ export default function BudgetTracker() {
             setShowCategoryForm(false);
             setEditingCategory(null);
           }}
+        />
+      )}
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
         />
       )}
     </div>

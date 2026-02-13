@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { tasks as tasksApi, projects as projectsApi } from '../api/client';
+import ConfirmModal from '../components/ConfirmModal';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -42,6 +43,7 @@ export default function TaskManager() {
   const [editTaskTitle, setEditTaskTitle] = useState('');
   const [editTaskPriority, setEditTaskPriority] = useState('medium');
   const [editTaskRecurrence, setEditTaskRecurrence] = useState('');
+  const [confirmModal, setConfirmModal] = useState(null);
   const addInputRef = useRef(null);
 
   useEffect(() => {
@@ -220,7 +222,7 @@ export default function TaskManager() {
     }
   }
 
-  async function handleDeleteProject(e, project, isArchived = false) {
+  function handleDeleteProject(e, project, isArchived = false) {
     e.stopPropagation(); // Prevent navigation
     const subCount = project.subProjectCount ?? 0;
     const taskCount = project.totalTasks ?? 0;
@@ -229,17 +231,30 @@ export default function TaskManager() {
       : taskCount > 0
         ? `Are you sure you want to delete "${project.name}" and its ${taskCount} task(s)?`
         : `Are you sure you want to delete "${project.name}"?`;
-    if (!window.confirm(message)) return;
-    try {
-      await projectsApi.delete(project._id);
-      if (isArchived) {
-        setArchivedProjects((prev) => prev.filter((p) => p._id !== project._id));
-      } else {
-        setProjects((prev) => prev.filter((p) => p._id !== project._id));
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    
+    setConfirmModal({
+      open: true,
+      title: 'Delete Project',
+      message: message,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await projectsApi.delete(project._id);
+          if (isArchived) {
+            setArchivedProjects((prev) => prev.filter((p) => p._id !== project._id));
+          } else {
+            setProjects((prev) => prev.filter((p) => p._id !== project._id));
+          }
+          setConfirmModal(null);
+        } catch (err) {
+          console.error(err);
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
   }
 
   const filteredTodayTasks = searchToday.trim()
@@ -621,6 +636,19 @@ export default function TaskManager() {
             </div>
           )}
         </div>
+      )}
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
+        />
       )}
     </div>
   );

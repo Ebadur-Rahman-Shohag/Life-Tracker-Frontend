@@ -2,6 +2,7 @@ import { useMemo, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BlockRenderer from './BlockRenderer';
 import { projects as projectsApi } from '../api/client';
+import ConfirmModal from './ConfirmModal';
 
 function formatTimestamp(iso) {
   try {
@@ -38,6 +39,7 @@ export default function NoteDetailView({ open, note, managedCategories = [], onC
   const navigate = useNavigate();
   const [connectedProjects, setConnectedProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [confirmModal, setConfirmModal] = useState(null);
 
   const categoryInfo = useMemo(() => {
     if (!managedCategories || !note?.category) return null;
@@ -221,10 +223,20 @@ export default function NoteDetailView({ open, note, managedCategories = [], onC
             </button>
             <button
               onClick={() => {
-                if (confirm('Are you sure you want to delete this note?')) {
-                  onDelete(note);
-                  onClose();
-                }
+                setConfirmModal({
+                  open: true,
+                  title: 'Delete Note',
+                  message: `Are you sure you want to delete "${note.title}"? This action cannot be undone.`,
+                  confirmText: 'Delete',
+                  cancelText: 'Cancel',
+                  variant: 'danger',
+                  onConfirm: () => {
+                    onDelete(note);
+                    onClose();
+                    setConfirmModal(null);
+                  },
+                  onCancel: () => setConfirmModal(null),
+                });
               }}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
             >
@@ -250,6 +262,19 @@ export default function NoteDetailView({ open, note, managedCategories = [], onC
           </div>
         </div>
       </div>
+
+      {confirmModal && (
+        <ConfirmModal
+          open={confirmModal.open}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          cancelText={confirmModal.cancelText}
+          variant={confirmModal.variant}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
+        />
+      )}
     </div>
   );
 }
