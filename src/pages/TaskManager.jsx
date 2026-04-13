@@ -594,7 +594,7 @@ export default function TaskManager() {
                   className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <h2 
+                    <h2
                       className="font-semibold text-slate-800 flex-1"
                     >
                       {project.name}
@@ -644,7 +644,7 @@ export default function TaskManager() {
                   {project.description && (
                     <p className="text-sm text-slate-500 mt-1">{project.description}</p>
                   )}
-                  <div 
+                  <div
                     className="mt-3 flex items-center gap-2"
                   >
                     <span className="text-sm font-medium text-emerald-600">{completed}/{total}</span>
