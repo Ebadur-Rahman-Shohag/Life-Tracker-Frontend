@@ -1,5 +1,7 @@
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
+import Loader from './Loader';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard' },
@@ -59,7 +61,9 @@ export default function Layout() {
       </aside>
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 p-4 md:p-6 overflow-auto">
-          <Outlet />
+          <Suspense fallback={<Loader message="Loading..." />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

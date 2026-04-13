@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
-import { tasks as tasksApi, projects as projectsApi } from '../api/client';
+import { tasks as tasksApi } from '../api/client';
+import { useProjects } from '../context/ProjectsContext';
 import ConfirmModal from '../components/ConfirmModal';
 import Loader from '../components/Loader';
 
@@ -30,16 +31,24 @@ export default function TaskManager() {
   const location = useLocation();
   const tab = searchParams.get('tab') || 'today';
   const [dailyTasks, setDailyTasks] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [archivedProjects, setArchivedProjects] = useState([]);
+  const {
+    projects,
+    archivedProjects,
+    projectsLoading,
+    setProjectsLoading,
+    projectsLoaded,
+    fetchProjects,
+    addOptimisticProject,
+    deleteProject,
+  } = useProjects();
   const [showArchived, setShowArchived] = useState(false);
   const [date, setDate] = useState(getLocalDateString());
   const [loading, setLoading] = useState(true);
-  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [dailyLoading, setDailyLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [newTaskRecurrence, setNewTaskRecurrence] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [addingTask, setAddingTask] = useState(false);
   const [searchToday, setSearchToday] = useState('');
   const [searchProjects, setSearchProjects] = useState('');
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -49,14 +58,33 @@ export default function TaskManager() {
   const [confirmModal, setConfirmModal] = useState(null);
   const addInputRef = useRef(null);
 
+  // Synchronously reset today-tab state when switching tabs, before any paint.
+  // useEffect runs *after* paint, which causes a one-frame stale-data flash.
+  // Calling setState during render makes React discard the render and immediately
+  // re-render with the correct state before committing to the DOM.
+  const [prevTab, setPrevTab] = useState(tab);
+  if (prevTab !== tab) {
+    setPrevTab(tab);
+    if (tab === 'today') {
+      setDailyTasks([]);
+      setDailyLoading(true);
+    }
+    if (tab === 'projects') {
+      setProjectsLoading(true);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function fetchDaily() {
+      setDailyLoading(true);
       try {
         const { data } = await tasksApi.list({ date });
         if (!cancelled) setDailyTasks(data);
       } catch {
         if (!cancelled) setDailyTasks([]);
+      } finally {
+        if (!cancelled) setDailyLoading(false);
       }
     }
     if (tab === 'today') fetchDaily();
@@ -82,47 +110,27 @@ export default function TaskManager() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [tab]);
 
+  const newProject = location.state?.newProject;
+  const newProjectId = newProject?._id;
+
   useEffect(() => {
     if (tab !== 'projects') return;
     let cancelled = false;
 
-    // Capture and clear navigation state (new project created)
-    const newProject = location.state?.newProject;
+    if (newProject && !newProject.parentId) {
+      addOptimisticProject(newProject);
+    }
+
+    if (!projectsLoaded && !projectsLoading) {
+      fetchProjects();
+    }
+
     if (newProject) {
       navigate(location.pathname + location.search, { replace: true, state: {} });
     }
 
-    async function fetchProjects() {
-      setProjectsLoading(true);
-      try {
-        // Only fetch top-level projects (parentId: null)
-        const { data } = await projectsApi.list({ includeArchived: true, parentId: 'null' });
-        if (!cancelled) {
-          let active = data.filter((p) => !p.archived);
-          // If the API response doesn't include the just-created project yet, merge it in
-          if (newProject && !newProject.parentId && !active.some((p) => p._id === newProject._id)) {
-            active = [{ ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...active];
-          }
-          setProjects(active);
-          setArchivedProjects(data.filter((p) => p.archived));
-        }
-      } catch {
-        if (!cancelled) {
-          // On error, at least show the new project if we have one
-          if (newProject && !newProject.parentId) {
-            setProjects([{ ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }]);
-          } else {
-            setProjects([]);
-          }
-          setArchivedProjects([]);
-        }
-      } finally {
-        if (!cancelled) setProjectsLoading(false);
-      }
-    }
-    fetchProjects();
     return () => { cancelled = true; };
-  }, [tab]);
+  }, [tab, newProjectId, projectsLoaded, projectsLoading, fetchProjects, addOptimisticProject, navigate, location.pathname, location.search]);
 
   useEffect(() => {
     setLoading(false);
@@ -132,7 +140,10 @@ export default function TaskManager() {
     e.preventDefault();
     const title = newTaskTitle.trim();
     if (!title) return;
-    setAdding(true);
+    setAddingTask(true);
+    // Clear input fields immediately for better UX
+    setNewTaskTitle('');
+    setNewTaskRecurrence('');
     try {
       const payload = { title, priority: newTaskPriority };
       if (newTaskRecurrence) {
@@ -142,13 +153,11 @@ export default function TaskManager() {
       }
       const { data } = await tasksApi.create(payload);
       setDailyTasks((prev) => [...prev, data]);
-      setNewTaskTitle('');
-      setNewTaskRecurrence('');
       addInputRef.current?.focus();
     } catch (err) {
       console.error(err);
     } finally {
-      setAdding(false);
+      setAddingTask(false);
     }
   }
 
@@ -257,7 +266,7 @@ export default function TaskManager() {
       : taskCount > 0
         ? `Are you sure you want to delete "${project.name}" and its ${taskCount} task(s)?`
         : `Are you sure you want to delete "${project.name}"?`;
-    
+
     setConfirmModal({
       open: true,
       title: 'Delete Project',
@@ -267,12 +276,7 @@ export default function TaskManager() {
       variant: 'danger',
       onConfirm: async () => {
         try {
-          await projectsApi.delete(project._id);
-          if (isArchived) {
-            setArchivedProjects((prev) => prev.filter((p) => p._id !== project._id));
-          } else {
-            setProjects((prev) => prev.filter((p) => p._id !== project._id));
-          }
+          await deleteProject(project._id, isArchived);
           setConfirmModal(null);
         } catch (err) {
           console.error(err);
@@ -408,10 +412,15 @@ export default function TaskManager() {
             </select>
             <button
               type="submit"
-              disabled={adding || !newTaskTitle.trim()}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
+              disabled={addingTask || !newTaskTitle.trim()}
+              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
             >
-              Add
+              {addingTask ? (
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                </svg>
+              ) : 'Add'}
             </button>
           </form>
           <ul className="space-y-2">
@@ -532,7 +541,8 @@ export default function TaskManager() {
               );
             })}
           </ul>
-          {dailyTasks.length === 0 && !loading && (
+          {dailyLoading && <Loader message="Loading tasks..." />}
+          {!dailyLoading && dailyTasks.length === 0 && (
             <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
               <p className="text-slate-600 mb-2">No tasks for this day.</p>
               <p className="text-sm text-slate-500 mb-4">Add your first task above to get started.</p>
@@ -559,7 +569,7 @@ export default function TaskManager() {
               value={searchProjects}
               onChange={(e) => setSearchProjects(e.target.value)}
               placeholder="Search projects..."
-              className="rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 text-sm w-48"
+              className="flex-1 min-w-60 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 text-sm"
             />
             <Link
               to="/tasks/projects/new"
@@ -580,12 +590,12 @@ export default function TaskManager() {
               return (
                 <div
                   key={project._id}
-                  className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors"
+                  onClick={() => navigate(`/tasks/projects/${project._id}`)}
+                  className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <h2 
-                      onClick={() => navigate(`/tasks/projects/${project._id}`)}
-                      className="font-semibold text-slate-800 cursor-pointer flex-1"
+                      className="font-semibold text-slate-800 flex-1"
                     >
                       {project.name}
                     </h2>
@@ -635,14 +645,13 @@ export default function TaskManager() {
                     <p className="text-sm text-slate-500 mt-1">{project.description}</p>
                   )}
                   <div 
-                    onClick={() => navigate(`/tasks/projects/${project._id}`)}
-                    className="mt-3 flex items-center gap-2 cursor-pointer"
+                    className="mt-3 flex items-center gap-2"
                   >
                     <span className="text-sm font-medium text-emerald-600">{completed}/{total}</span>
                     <span className="text-sm text-slate-500">tasks</span>
                     <span className="text-sm font-bold text-slate-700">{percent}%</span>
                     {total > 0 && (
-                      <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden max-w-[120px]">
+                      <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden max-w-30">
                         <div
                           className="h-full bg-emerald-500 rounded-full transition-all"
                           style={{ width: `${percent}%` }}

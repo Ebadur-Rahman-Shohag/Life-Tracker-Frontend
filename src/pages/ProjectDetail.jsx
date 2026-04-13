@@ -39,7 +39,6 @@ export default function ProjectDetail() {
   const [subProjects, setSubProjects] = useState([]);
   const [parentChain, setParentChain] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [subProjectsLoading, setSubProjectsLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
@@ -94,10 +93,6 @@ export default function ProjectDetail() {
     }
     
     async function fetchProject() {
-      // Set loading state if we have a new sub-project to show smooth transition
-      if (newSubProject && newSubProject.parentId === projectId) {
-        setSubProjectsLoading(true);
-      }
       
       try {
         const [projRes, tasksRes] = await Promise.all([
@@ -135,7 +130,6 @@ export default function ProjectDetail() {
       } finally {
         if (!cancelled) {
           setLoading(false);
-          setSubProjectsLoading(false);
         }
       }
     }
@@ -567,9 +561,7 @@ export default function ProjectDetail() {
             + New Sub-Project
           </Link>
         </div>
-        {subProjectsLoading ? (
-          <Loader message="Loading sub-projects..." />
-        ) : subProjects.length > 0 ? (
+        {subProjects.length > 0 ? (
           <div className="grid gap-2">
             {subProjects.map((sp, index) => {
               const spTotal = sp.totalTasks ?? 0;
