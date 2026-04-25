@@ -41,6 +41,7 @@ export default function Dashboard() {
     prayersData,
     budgetData,
     notesData,
+    referencesData,
     refetch,
   } = useDashboardData();
 
@@ -88,6 +89,9 @@ export default function Dashboard() {
 
   const notesTotal = notesData.stats?.totalActive || 0;
   const notesFavorites = notesData.stats?.favorites || 0;
+
+  const referencesTotal = referencesData.stats?.total ?? 0;
+  const referencesFavorites = referencesData.stats?.favorites ?? 0;
 
   // Prepare trend data for charts
   const prayerTrendData = prayersData.weekStats
@@ -144,7 +148,7 @@ export default function Dashboard() {
       )}
 
       {/* Quick Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <SummaryCard
           title="Prayers"
           value={`${prayersCount}/5`}
@@ -212,6 +216,15 @@ export default function Dashboard() {
           icon="📝"
           color="blue"
           link="/notes"
+        />
+
+        <SummaryCard
+          title="References"
+          value={referencesTotal}
+          subtitle={`${referencesFavorites} favorites`}
+          icon="📎"
+          color="purple"
+          link="/references"
         />
       </div>
 
@@ -467,6 +480,42 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">📎</span>
+              <h3 className="text-lg font-semibold text-slate-800">References</h3>
+            </div>
+            <Link
+              to="/references"
+              className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+            >
+              View All →
+            </Link>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <div className="text-2xl font-bold text-slate-800 mb-1">{referencesTotal}</div>
+              <div className="text-xs text-slate-500">Saved links and sources</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+              <div>
+                <div className="text-sm text-slate-600">Favorites</div>
+                <div className="text-lg font-semibold text-amber-600">{referencesFavorites}</div>
+              </div>
+              <div>
+                <div className="text-sm text-slate-600">With projects</div>
+                <div className="text-lg font-semibold text-slate-700">
+                  {referencesData.stats?.withProjects ?? '—'}
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 pt-1">
+              Link references to projects to see them on each project page.
+            </p>
           </div>
         </div>
       </div>

@@ -1,3 +1,10 @@
+# Life Tracker (frontend)
+
+## Security notes
+
+- **Auth token**: the session JWT is stored in `localStorage`. Any same-origin script injection (XSS) could read it, so the app should stay free of untrusted script. Rich note content is rendered with TipTap-generated HTML; keep dependencies updated and follow normal XSS hygiene.
+- **API**: the backend enforces CORS, rate limits on `/api/auth`, and Helmet. Configure `VITE_API_URL` in production to point at your deployed API. See the server’s `.env.example` for CORS and JWT settings.
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

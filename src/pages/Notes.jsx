@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { notes as notesApi, projects as projectsApi } from '../api/client';
+import { buildCategoryList, loadManagedCategoriesWithSeeding } from '../lib/noteFormResources';
 import Loader from '../components/Loader';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -29,15 +30,6 @@ function truncate(text, max = 200) {
   return `${t.slice(0, max).trim()}…`;
 }
 
-function buildCategoryList(managedCategories, stats) {
-  const managedNames = (managedCategories || []).map((c) => c.name).filter(Boolean);
-  const fromStats = (stats?.categories || [])
-    .map((c) => (typeof c === 'string' ? c : c.name))
-    .filter(Boolean);
-  const unique = new Set(['All', ...managedNames, ...fromStats]);
-  return Array.from(unique);
-}
-
 function countForCategory(stats, category) {
   if (!stats) return null;
   if (category === 'All') return stats.totalActive ?? null;
@@ -63,7 +55,8 @@ function getCategoryColor(managedCategories, categoryName) {
 function NoteCard({ note, projects = [], onView, onEdit, onDelete, onToggleFavorite, onToggleArchive }) {
   const connectedProjects = useMemo(() => {
     if (!note.projectIds || note.projectIds.length === 0) return [];
-    return projects.filter((p) => note.projectIds.includes(p._id));
+    const ids = new Set((note.projectIds || []).map((id) => String(id)));
+    return projects.filter((p) => ids.has(String(p._id)));
   }, [note.projectIds, projects]);
   return (
     <div
@@ -193,38 +186,7 @@ export default function Notes() {
 
   const loadCategories = useCallback(async () => {
     try {
-      const res = await notesApi.getCategories({ activeOnly: 'true' });
-      let cats = res.data || [];
-
-      // Initialize default categories if none exist
-      if (cats.length === 0) {
-        const defaultCategories = [
-          { name: 'Ideas', icon: '💡', color: '#f59e0b' },
-          { name: 'Personal', icon: '🏠', color: '#10b981' },
-          { name: 'Reading', icon: '📚', color: '#3b82f6' },
-          { name: 'Work', icon: '💼', color: '#8b5cf6' },
-        ];
-
-        // Create default categories one by one
-        for (const cat of defaultCategories) {
-          try {
-            const existing = cats.find((c) => c.name.toLowerCase() === cat.name.toLowerCase());
-            if (!existing) {
-              await notesApi.createCategory(cat);
-            }
-          } catch (err) {
-            // Ignore duplicate errors
-            if (err.response?.status !== 400) {
-              console.error('Error creating default category:', err);
-            }
-          }
-        }
-
-        // Reload categories after creating defaults
-        const reloadRes = await notesApi.getCategories({ activeOnly: 'true' });
-        cats = reloadRes.data || [];
-      }
-
+      const cats = await loadManagedCategoriesWithSeeding(notesApi);
       setManagedCategories(cats);
     } catch (err) {
       console.error('Failed to load categories:', err);
@@ -330,7 +292,11 @@ export default function Notes() {
       await Promise.all([loadStats(), loadNotes({ search })]);
     } catch (err) {
       console.error(err);
-      setError('Failed to save note. Please try again.');
+      const msg =
+        err.response?.data?.errors?.[0]?.msg ||
+        err.response?.data?.message ||
+        'Failed to save note. Please try again.';
+      setError(msg);
     }
   }
 
@@ -360,7 +326,16 @@ export default function Notes() {
 
   async function handleToggleFavorite(note) {
     try {
+      const nextFav = !note.isFavorite;
       await notesApi.toggleFavorite(note._id);
+      if (viewingNote?._id === note._id) {
+        if (mode === 'favorites' && !nextFav) {
+          setDetailViewOpen(false);
+          setViewingNote(null);
+        } else {
+          setViewingNote((v) => (v ? { ...v, isFavorite: nextFav } : v));
+        }
+      }
       await Promise.all([loadStats(), loadNotes({ search })]);
     } catch (err) {
       console.error(err);
@@ -370,7 +345,20 @@ export default function Notes() {
 
   async function handleToggleArchive(note) {
     try {
+      const wasArchived = note.archived;
       await notesApi.toggleArchive(note._id);
+      const nowArchived = !wasArchived;
+      if (viewingNote?._id === note._id) {
+        const shouldClose =
+          ((mode === 'gallery' || mode === 'favorites') && !wasArchived && nowArchived) ||
+          (mode === 'archived' && wasArchived && !nowArchived);
+        if (shouldClose) {
+          setDetailViewOpen(false);
+          setViewingNote(null);
+        } else {
+          setViewingNote((v) => (v ? { ...v, archived: nowArchived } : v));
+        }
+      }
       await Promise.all([loadStats(), loadNotes({ search })]);
     } catch (err) {
       console.error(err);

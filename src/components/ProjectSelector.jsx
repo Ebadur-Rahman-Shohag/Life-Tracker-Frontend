@@ -42,7 +42,7 @@ function ProjectOption({ project, level = 0, selected, onToggle, searchTerm }) {
     return null;
   }
 
-  const isSelected = selected.includes(project._id);
+  const isSelected = selected.some((id) => String(id) === String(project._id));
   const indent = level * 20;
 
   return (
@@ -102,16 +102,25 @@ export default function ProjectSelector({ selected = [], onChange, onClose }) {
   const hierarchy = useMemo(() => buildProjectHierarchy(projects), [projects]);
 
   function handleToggle(projectId) {
-    const newSelected = selected.includes(projectId)
-      ? selected.filter((id) => id !== projectId)
-      : [...selected, projectId];
+    const id = String(projectId);
+    const newSelected = selected.some((s) => String(s) === id)
+      ? selected.filter((s) => String(s) !== id)
+      : [...selected, id];
     onChange(newSelected);
   }
 
   if (loading) {
     return (
-      <div className="p-4 text-center text-slate-500">
-        <p>Loading projects...</p>
+      <div
+        className="bg-white rounded-lg border border-slate-200 shadow-lg p-6 flex flex-col items-center justify-center gap-2 text-slate-600"
+        role="status"
+        aria-live="polite"
+      >
+        <div
+          className="h-8 w-8 rounded-full border-2 border-slate-200 border-t-emerald-600 animate-spin"
+          aria-hidden
+        />
+        <p className="text-sm">Loading projects…</p>
       </div>
     );
   }
