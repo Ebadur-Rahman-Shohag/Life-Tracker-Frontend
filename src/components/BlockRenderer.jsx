@@ -17,6 +17,15 @@ import json from 'highlight.js/lib/languages/json';
 import bash from 'highlight.js/lib/languages/bash';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const lowlight = createLowlight();
 
 lowlight.register('javascript', javascript);
@@ -62,9 +71,12 @@ export default function BlockRenderer({ content }) {
       }
     }
 
-    // Legacy: plain text content
+    // Legacy: plain text content (escape to avoid stored HTML in old notes)
     if (typeof content === 'string') {
-      return content.split('\n').map((line, i) => `<p>${line || '<br>'}</p>`).join('');
+      return content
+        .split('\n')
+        .map((line) => (line ? `<p>${escapeHtml(line)}</p>` : '<p><br></p>'))
+        .join('');
     }
 
     return '';

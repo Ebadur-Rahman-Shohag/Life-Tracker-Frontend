@@ -134,7 +134,7 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className="relative w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden flex flex-col">
+      <div className="relative w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl border border-slate-200 shadow-xl flex flex-col min-h-0">
         {/* Fixed Header */}
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
           <h2 className="text-lg font-semibold text-slate-800">{isEdit ? 'Edit note' : 'New note'}</h2>
@@ -147,119 +147,124 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
           </button>
         </div>
 
-        {/* Form with Scrollable Content */}
+        {/* Form: scroll only the main column; project dropdown is outside overflow so it is not clipped */}
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-          {/* Scrollable Content Area */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Title</label>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Note title…"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                maxLength={200}
-                autoFocus
-              />
-            </div>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Title</label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Note title…"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  maxLength={200}
+                  autoFocus
+                />
+              </div>
 
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Category</label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              >
-                <option value="Uncategorized">Uncategorized</option>
-                {categoryOptions.map((c) => {
-                  const icon = getCategoryIcon(c);
-                  return (
-                    <option key={c} value={c}>
-                      {icon ? `${icon} ${c}` : c}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Content</label>
-              <BlockEditor
-                content={content}
-                onChange={(json) => setContent(json)}
-                placeholder="Start writing... Use / for commands, or click the toolbar buttons above."
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Projects (optional)</label>
-              <div className="relative" ref={selectorRef}>
-                <button
-                  type="button"
-                  onClick={() => setShowProjectSelector(!showProjectSelector)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-left text-sm text-slate-800 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Category</label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 >
-                  {selectedProjectIds.length === 0
-                    ? 'Select projects...'
-                    : `${selectedProjectIds.length} project${selectedProjectIds.length !== 1 ? 's' : ''} selected`}
-                </button>
-                {showProjectSelector && (
-                  <div className="absolute z-10 w-full mt-1">
-                    <ProjectSelector
-                      selected={selectedProjectIds}
-                      onChange={setSelectedProjectIds}
-                      onClose={() => setShowProjectSelector(false)}
-                    />
+                  <option value="Uncategorized">Uncategorized</option>
+                  {categoryOptions.map((c) => {
+                    const icon = getCategoryIcon(c);
+                    return (
+                      <option key={c} value={c}>
+                        {icon ? `${icon} ${c}` : c}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div className="space-y-1 min-h-0 flex flex-col">
+                <label className="text-sm font-medium text-slate-700">Content</label>
+                <div className="flex flex-col min-h-[200px] max-h-[min(50vh,22rem)]">
+                  <BlockEditor
+                    content={content}
+                    onChange={(json) => setContent(json)}
+                    placeholder="Start writing… Use the toolbar above for headings, lists, code blocks, and tables."
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 p-5 pt-2 space-y-4 border-t border-slate-100 bg-white">
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">Projects (optional)</label>
+                <div className="relative z-[60]" ref={selectorRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowProjectSelector(!showProjectSelector)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-left text-sm text-slate-800 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    {selectedProjectIds.length === 0
+                      ? 'Select projects...'
+                      : `${selectedProjectIds.length} project${selectedProjectIds.length !== 1 ? 's' : ''} selected`}
+                  </button>
+                  {showProjectSelector && (
+                    <div className="absolute left-0 right-0 top-full z-[100] mt-1">
+                      <ProjectSelector
+                        selected={selectedProjectIds}
+                        onChange={setSelectedProjectIds}
+                        onClose={() => setShowProjectSelector(false)}
+                      />
+                    </div>
+                  )}
+                </div>
+                {selectedProjectIds.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {selectedProjectIds.map((projectId) => {
+                      const project = projects.find((p) => String(p._id) === String(projectId));
+                      return (
+                        <span
+                          key={projectId}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        >
+                          {project?.name || projectId}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedProjectIds(selectedProjectIds.filter((id) => id !== projectId))}
+                            className="text-emerald-600 hover:text-emerald-800"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-              {selectedProjectIds.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {selectedProjectIds.map((projectId) => {
-                    const project = projects.find((p) => p._id === projectId);
-                    return (
-                      <span
-                        key={projectId}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      >
-                        {project?.name || projectId}
-                        <button
-                          type="button"
-                          onClick={() => setSelectedProjectIds(selectedProjectIds.filter((id) => id !== projectId))}
-                          className="text-emerald-600 hover:text-emerald-800"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-700">Tags</label>
-                <input
-                  value={tagsInput}
-                  onChange={(e) => setTagsInput(e.target.value)}
-                  placeholder="e.g. weekly, work, idea"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                />
-                <p className="text-xs text-slate-500">Comma-separated (optional).</p>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-700">Options</label>
-                <label className="flex items-center gap-2 text-sm text-slate-700 select-none">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">Tags</label>
                   <input
-                    type="checkbox"
-                    checked={isFavorite}
-                    onChange={(e) => setIsFavorite(e.target.checked)}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-200"
+                    value={tagsInput}
+                    onChange={(e) => setTagsInput(e.target.value)}
+                    placeholder="e.g. weekly, work, idea"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                   />
-                  Favorite
-                </label>
+                  <p className="text-xs text-slate-500">Comma-separated (optional).</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">Options</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={isFavorite}
+                      onChange={(e) => setIsFavorite(e.target.checked)}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-200"
+                    />
+                    Favorite
+                  </label>
+                </div>
               </div>
             </div>
           </div>
