@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
 import { projects as projectsApi, tasks as tasksApi, notes as notesApi, references as referencesApi } from '../api/client';
 import { buildCategoryList, fetchNoteFormCatalog } from '../lib/noteFormResources';
@@ -194,6 +194,13 @@ export default function ProjectDetail() {
     setEditingReference(null);
   }
   const [confirmModal, setConfirmModal] = useState(null);
+
+  // When projectId changes, show loading before paint so we do not render one frame of the previous
+  // project (e.g. sub-project) while the URL already points at the parent — same <ProjectDetail> instance.
+  useLayoutEffect(() => {
+    if (isNew) return;
+    setLoading(true);
+  }, [projectId, isNew]);
 
   const defaultReferenceProjectIds = useMemo(
     () => (projectId && !isNew ? [projectId] : []),
@@ -584,7 +591,11 @@ export default function ProjectDetail() {
     
     return (
       <div className="max-w-xl mx-auto">
-        <Link to={backLink} className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block">
+        <Link
+          to={backLink}
+          replace={!!parentIdFromUrl}
+          className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block"
+        >
           ← {parentIdFromUrl ? `Back to ${parentProject?.name || 'Parent Project'}` : 'Back to Task Manager'}
         </Link>
         {parentChain.length > 0 && (
@@ -636,7 +647,11 @@ export default function ProjectDetail() {
             >
               {parentIdFromUrl ? 'Create Sub-Project' : 'Create Project'}
             </button>
-            <Link to={backLink} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50">
+            <Link
+              to={backLink}
+              replace={!!parentIdFromUrl}
+              className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+            >
               Cancel
             </Link>
           </div>
@@ -674,7 +689,11 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <Link to={backLink} className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block">
+      <Link
+        to={backLink}
+        replace={parentChain.length > 0}
+        className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block"
+      >
         {backLabel}
       </Link>
 
@@ -788,19 +807,21 @@ export default function ProjectDetail() {
               return (
                 <div
                   key={sp._id}
-                  className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-3 hover:border-emerald-300 hover:shadow-sm transition-colors"
+                  className="relative flex items-stretch bg-white border border-slate-200 rounded-lg overflow-hidden hover:border-emerald-300 hover:shadow-sm transition-colors"
                 >
                   <Link
                     to={`/tasks/projects/${sp._id}`}
-                    className="flex-1 flex items-center justify-between"
-                  >
-                    <div>
+                    className="absolute inset-0 z-0"
+                    aria-label={`Open sub-project ${sp.name}`}
+                  />
+                  <div className="relative z-10 flex min-w-0 flex-1 items-center justify-between gap-2 p-3 pr-1 pointer-events-none">
+                    <div className="min-w-0">
                       <span className="font-medium text-slate-800">{sp.name}</span>
                       {sp.subProjectCount > 0 && (
                         <span className="ml-2 text-xs text-slate-400">({sp.subProjectCount} sub-project{sp.subProjectCount > 1 ? 's' : ''})</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-sm">
+                    <div className="flex shrink-0 items-center gap-2 text-sm">
                       <span className="text-emerald-600 font-medium">{spCompleted}/{spTotal}</span>
                       <span className="text-slate-500">{spPercent}%</span>
                       {spTotal > 0 && (
@@ -812,12 +833,13 @@ export default function ProjectDetail() {
                         </div>
                       )}
                     </div>
-                  </Link>
-                  <div className="flex items-center gap-0 ml-2">
+                  </div>
+                  <div className="relative z-10 flex items-center gap-0 self-stretch border-l border-slate-100 bg-white px-1 py-0.5 pointer-events-auto">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         moveSubProject(index, -1);
                       }}
                       disabled={index === 0}
@@ -830,6 +852,7 @@ export default function ProjectDetail() {
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         moveSubProject(index, 1);
                       }}
                       disabled={index === subProjects.length - 1}
