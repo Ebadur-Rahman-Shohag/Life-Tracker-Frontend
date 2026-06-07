@@ -36,7 +36,6 @@ import Loader from '../components/Loader';
  */
 export default function PrayerTracker() {
   // ============ STATE MANAGEMENT ============
-  const [loading, setLoading] = useState(true);
   const [view, setView] = useState('week');
   const [currentDate, setCurrentDate] = useState(new Date());
 
@@ -153,36 +152,25 @@ export default function PrayerTracker() {
 
   // ============ EFFECTS ============
 
-  // Initial load - load all stats
+  // Load stats on mount and when view/date changes (monthly only for year view)
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
+    const loadStats = async () => {
       setDataLoading(true);
       setError(null);
       try {
-        await Promise.all([
-          loadDailyStats(false), // Complete replacement on initial load
-          loadMonthlyStats(),
-          loadStreakStats(),
-        ]);
+        const requests = [loadDailyStats(false), loadStreakStats()];
+        if (view === 'year') {
+          requests.push(loadMonthlyStats());
+        }
+        await Promise.all(requests);
       } catch (err) {
         setError('Failed to load data. Please refresh the page.');
       } finally {
-        setLoading(false);
         setDataLoading(false);
       }
     };
-    load();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Load stats when view or date changes
-  useEffect(() => {
-    if (!loading) {
-      loadDailyStats(false); // Complete replacement on view change
-      loadMonthlyStats();
-      loadStreakStats();
-    }
-  }, [view, currentDate, loading, loadDailyStats, loadMonthlyStats, loadStreakStats]);
+    loadStats();
+  }, [view, currentDate, loadDailyStats, loadMonthlyStats, loadStreakStats, setDataLoading, setError]);
 
   // ============ COMPUTED VALUES FOR UI ============
 
@@ -313,7 +301,7 @@ export default function PrayerTracker() {
 
   // ============ RENDER ============
 
-  if (loading || dataLoading) {
+  if (dataLoading) {
     return <Loader message="Loading prayers..." />;
   }
 
