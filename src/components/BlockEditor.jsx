@@ -30,6 +30,22 @@ lowlight.register('html', html);
 lowlight.register('json', json);
 lowlight.register('bash', bash);
 
+/**
+ * `toggleHeading` is block-scoped: it turns every textblock in the current selection
+ * into a heading. A multi-paragraph (or "select all" style) range therefore
+ * flips many blocks at once. Collapse to a caret in the anchor block so toolbar
+ * clicks target only the line/block where the selection started.
+ */
+function toggleHeadingSingleBlock(editor, level) {
+  const { state } = editor;
+  const { empty, $from, $to, $anchor } = state.selection;
+  const chain = editor.chain().focus();
+  if (!empty && $from.parent !== $to.parent) {
+    chain.setTextSelection($anchor.pos);
+  }
+  chain.toggleHeading({ level }).run();
+}
+
 export default function BlockEditor({ content, onChange, placeholder = 'Start writing...' }) {
   const lastEmittedRef = useRef(null);
 
@@ -70,7 +86,7 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-slate max-w-none focus:outline-none min-h-[300px] px-4 py-3',
+        class: 'prose prose-slate max-w-none focus:outline-none min-h-[8rem] px-4 py-3',
       },
     },
   });
@@ -99,7 +115,23 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
   }, [content, editor]);
 
   if (!editor) {
-    return null;
+    return (
+      <div
+        className="border border-slate-300 rounded-lg overflow-hidden bg-white flex flex-col min-h-[200px] max-h-[min(50vh,22rem)] w-full"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="h-10 border-b border-slate-200 bg-slate-50 flex items-center gap-2 px-2">
+          <div className="h-6 w-20 rounded bg-slate-200/80" />
+          <div className="h-6 w-16 rounded bg-slate-200/80" />
+          <div className="h-6 w-24 rounded bg-slate-200/80" />
+        </div>
+        <div className="flex-1 min-h-[8rem] flex items-center justify-center bg-slate-50/80 text-sm text-slate-500">
+          Loading editor…
+        </div>
+      </div>
+    );
   }
 
   const MenuBar = () => (
@@ -107,7 +139,7 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
       <div className="flex items-center gap-1 border-r border-slate-300 pr-2">
         <button
           type="button"
-          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+          onClick={() => toggleHeadingSingleBlock(editor, 1)}
           className={`px-2 py-1 rounded text-sm font-medium ${
             editor.isActive('heading', { level: 1 })
               ? 'bg-emerald-100 text-emerald-700'
@@ -119,7 +151,7 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
         </button>
         <button
           type="button"
-          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+          onClick={() => toggleHeadingSingleBlock(editor, 2)}
           className={`px-2 py-1 rounded text-sm font-medium ${
             editor.isActive('heading', { level: 2 })
               ? 'bg-emerald-100 text-emerald-700'
@@ -131,7 +163,7 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
         </button>
         <button
           type="button"
-          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+          onClick={() => toggleHeadingSingleBlock(editor, 3)}
           className={`px-2 py-1 rounded text-sm font-medium ${
             editor.isActive('heading', { level: 3 })
               ? 'bg-emerald-100 text-emerald-700'
@@ -209,7 +241,7 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
         </button>
       </div>
 
-      <div className="flex items-center gap-1 border-r border-slate-300 pr-2">
+      <div className="flex items-center gap-1 pr-2">
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleCodeBlock().run()}
@@ -220,9 +252,6 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
         >
           {'{ }'}
         </button>
-      </div>
-
-      <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={() =>
@@ -242,10 +271,10 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
   );
 
   return (
-    <div className="border border-slate-300 rounded-lg overflow-hidden bg-white flex flex-col">
+    <div className="flex w-full min-h-[200px] max-h-full flex-col border border-slate-300 rounded-lg overflow-hidden bg-white h-full">
       <MenuBar />
-      <div className="flex-1 min-h-[300px] max-h-[400px] overflow-y-auto">
-        <EditorContent editor={editor} className="min-h-[300px]" />
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <EditorContent editor={editor} className="min-h-[8rem]" />
       </div>
     </div>
   );

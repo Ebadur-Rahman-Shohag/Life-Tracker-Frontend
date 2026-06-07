@@ -12,7 +12,6 @@ const CATEGORY_COLORS = [
 ];
 
 export default function NoteCategoryForm({ open, category, onClose, onSubmit, onDelete }) {
-  if (!open) return null;
   const [formData, setFormData] = useState({
     name: '',
     icon: '📝',
@@ -22,14 +21,20 @@ export default function NoteCategoryForm({ open, category, onClose, onSubmit, on
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (!open) return;
     if (category) {
       setFormData({
         name: category.name || '',
         icon: category.icon || '📝',
         color: category.color || '#10b981',
       });
+    } else {
+      setFormData({ name: '', icon: '📝', color: '#10b981' });
     }
-  }, [category]);
+    setError(null);
+  }, [open, category]);
+
+  if (!open) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();

@@ -55,6 +55,7 @@ export const projects = {
   delete: (id) => client.delete(`/projects/${id}`),
   reorder: (projectIds) => client.put('/projects/reorder', { projectIds }),
   getNotes: (id, params) => client.get(`/projects/${id}/notes`, { params }),
+  getReferences: (id, params) => client.get(`/projects/${id}/references`, { params }),
 };
 
 export const tasks = {
@@ -104,6 +105,15 @@ export const budget = {
   // Summary & Aggregations
   getSummary: (params) => client.get('/budget/summary', { params }),
   getMonthly: (year) => client.get('/budget/monthly', { params: { year } }),
+};
+
+export const references = {
+  list: (params) => client.get('/references', { params }),
+  stats: () => client.get('/references/stats'),
+  get: (id) => client.get(`/references/${id}`),
+  create: (data) => client.post('/references', data),
+  update: (id, data) => client.put(`/references/${id}`, data),
+  delete: (id) => client.delete(`/references/${id}`),
 };
 
 export const notes = {

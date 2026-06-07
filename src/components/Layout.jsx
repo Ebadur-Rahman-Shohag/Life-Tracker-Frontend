@@ -1,13 +1,17 @@
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
+import Loader from './Loader';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/tasks', label: 'Task Manager' },
+  { to: '/pomodoro', label: 'Pomodoro' },
   { to: '/habits', label: 'Habit Tracker' },
   { to: '/prayers', label: 'Prayer Tracker' },
   { to: '/budget', label: 'Budget & Finance' },
   { to: '/notes', label: 'Notes' },
+  { to: '/references', label: 'References' },
 ];
 
 export default function Layout() {
@@ -33,7 +37,8 @@ export default function Layout() {
             const isActive =
               location.pathname === to ||
               location.pathname.startsWith(`${to}/`) ||
-              (to === '/tasks' && location.pathname.startsWith('/tasks'));
+              (to === '/tasks' && location.pathname.startsWith('/tasks')) ||
+              (to === '/pomodoro' && location.pathname.startsWith('/pomodoro'));
             return (
               <Link
                 key={to}
@@ -59,7 +64,9 @@ export default function Layout() {
       </aside>
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 p-4 md:p-6 overflow-auto">
-          <Outlet />
+          <Suspense fallback={<Loader message="Loading..." />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

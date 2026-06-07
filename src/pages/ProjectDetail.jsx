@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
-import { projects as projectsApi, tasks as tasksApi, notes as notesApi } from '../api/client';
+import { projects as projectsApi, tasks as tasksApi, notes as notesApi, references as referencesApi } from '../api/client';
+import { buildCategoryList, fetchNoteFormCatalog } from '../lib/noteFormResources';
 import Loader from '../components/Loader';
 import NoteDetailView from '../components/NoteDetailView';
 import ConfirmModal from '../components/ConfirmModal';
@@ -8,6 +9,9 @@ import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
 import { sortTasks } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
+import ReferenceFormModal from '../components/ReferenceFormModal';
+
+const NoteForm = lazy(() => import('../components/NoteForm'));
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -43,7 +47,6 @@ export default function ProjectDetail() {
   const [subProjects, setSubProjects] = useState([]);
   const [parentChain, setParentChain] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [subProjectsLoading, setSubProjectsLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
@@ -65,7 +68,148 @@ export default function ProjectDetail() {
   const [viewingNote, setViewingNote] = useState(null);
   const [detailViewOpen, setDetailViewOpen] = useState(false);
   const [includeSubProjectsNotes, setIncludeSubProjectsNotes] = useState(false);
+  const [projectReferences, setProjectReferences] = useState([]);
+  const [loadingProjectReferences, setLoadingProjectReferences] = useState(false);
+  const [includeSubProjectsReferences, setIncludeSubProjectsReferences] = useState(false);
+  const [referenceModalOpen, setReferenceModalOpen] = useState(false);
+  const [editingReference, setEditingReference] = useState(null);
+  const [referenceProjects, setReferenceProjects] = useState([]);
+
+  const [noteFormOpen, setNoteFormOpen] = useState(false);
+  const [noteForForm, setNoteForForm] = useState(null);
+  const [noteFormStats, setNoteFormStats] = useState(null);
+  const [noteFormManagedCategories, setNoteFormManagedCategories] = useState([]);
+  const [noteFormCatalogReady, setNoteFormCatalogReady] = useState(false);
+  const [noteFormCatalogLoading, setNoteFormCatalogLoading] = useState(false);
+  const [noteFormError, setNoteFormError] = useState(null);
+
+  const noteFormCategories = useMemo(
+    () => buildCategoryList(noteFormManagedCategories, noteFormStats),
+    [noteFormManagedCategories, noteFormStats]
+  );
+
+  const loadProjectNotesData = useCallback(async () => {
+    const notesRes = await projectsApi.getNotes(projectId, { includeSubProjects: includeSubProjectsNotes });
+    return notesRes.data || [];
+  }, [projectId, includeSubProjectsNotes]);
+
+  const refetchProjectNotes = useCallback(async () => {
+    if (isNew || !projectId) return;
+    try {
+      setLoadingNotes(true);
+      const data = await loadProjectNotesData();
+      setProjectNotes(data);
+    } catch (err) {
+      console.error('Failed to load notes:', err);
+      setProjectNotes([]);
+    } finally {
+      setLoadingNotes(false);
+    }
+  }, [isNew, projectId, loadProjectNotesData]);
+
+  const ensureNoteFormCatalog = useCallback(async () => {
+    if (noteFormCatalogReady) return;
+    setNoteFormCatalogLoading(true);
+    try {
+      const { stats, managedCategories } = await fetchNoteFormCatalog(notesApi);
+      setNoteFormStats(stats);
+      setNoteFormManagedCategories(managedCategories);
+      setNoteFormCatalogReady(true);
+    } finally {
+      setNoteFormCatalogLoading(false);
+    }
+  }, [noteFormCatalogReady]);
+
+  const openAddNote = useCallback(async () => {
+    if (isNew || !projectId) return;
+    setNoteFormError(null);
+    try {
+      await ensureNoteFormCatalog();
+      setNoteForForm({
+        projectIds: [projectId],
+        title: '',
+        content: '',
+        category: 'Uncategorized',
+        isFavorite: false,
+        tags: [],
+      });
+      setNoteFormOpen(true);
+    } catch (err) {
+      console.error('Failed to load note form data:', err);
+      setNoteFormError('Failed to load categories. Please try again.');
+    }
+  }, [isNew, projectId, ensureNoteFormCatalog]);
+
+  const openEditNote = useCallback(
+    async (note) => {
+      setNoteFormError(null);
+      try {
+        await ensureNoteFormCatalog();
+        setNoteForForm(note);
+        setNoteFormOpen(true);
+        setDetailViewOpen(false);
+        setViewingNote(null);
+      } catch (err) {
+        console.error('Failed to load note form data:', err);
+        setNoteFormError('Failed to load categories. Please try again.');
+      }
+    },
+    [ensureNoteFormCatalog]
+  );
+
+  const closeNoteForm = useCallback(() => {
+    setNoteFormOpen(false);
+    setNoteForForm(null);
+    setNoteFormError(null);
+  }, []);
+
+  async function handleNoteFormSubmit(payload) {
+    if (!noteForForm) return;
+    setNoteFormError(null);
+    try {
+      if (noteForForm._id) {
+        await notesApi.update(noteForForm._id, payload);
+      } else {
+        await notesApi.create(payload);
+      }
+      closeNoteForm();
+      await refetchProjectNotes();
+    } catch (err) {
+      const msg =
+        err.response?.data?.errors?.[0]?.msg ||
+        err.response?.data?.message ||
+        (err instanceof Error ? err.message : 'Failed to save note.');
+      setNoteFormError(msg);
+    }
+  }
+
+  function openReferenceCreateModal() {
+    setEditingReference(null);
+    setReferenceModalOpen(true);
+  }
+
+  function openReferenceEditModal(ref) {
+    setEditingReference(ref);
+    setReferenceModalOpen(true);
+  }
+
+  function closeReferenceModal() {
+    setReferenceModalOpen(false);
+    setEditingReference(null);
+  }
   const [confirmModal, setConfirmModal] = useState(null);
+
+  // When projectId changes, show loading before paint so we do not render one frame of the previous
+  // project (e.g. sub-project) while the URL already points at the parent — same <ProjectDetail> instance.
+  useLayoutEffect(() => {
+    if (isNew) return;
+    setLoading(true);
+  }, [projectId, isNew]);
+
+  const defaultReferenceProjectIds = useMemo(
+    () => (projectId && !isNew ? [projectId] : []),
+    [projectId, isNew]
+  );
 
   useEffect(() => {
     if (isNew) {
@@ -98,10 +242,6 @@ export default function ProjectDetail() {
     }
     
     async function fetchProject() {
-      // Set loading state if we have a new sub-project to show smooth transition
-      if (newSubProject && newSubProject.parentId === projectId) {
-        setSubProjectsLoading(true);
-      }
       
       try {
         const [projRes, tasksRes] = await Promise.all([
@@ -139,7 +279,6 @@ export default function ProjectDetail() {
       } finally {
         if (!cancelled) {
           setLoading(false);
-          setSubProjectsLoading(false);
         }
       }
     }
@@ -151,33 +290,96 @@ export default function ProjectDetail() {
     if (isNew && nameInputRef.current) nameInputRef.current.focus();
   }, [isNew]);
 
-  // Separate effect for loading notes to avoid refetching entire project
+  // Load connected notes (same query as refetchProjectNotes, with unmount cancel)
   useEffect(() => {
     if (isNew || !projectId) return;
     let cancelled = false;
-    
-    async function fetchNotes() {
+
+    (async () => {
       try {
         setLoadingNotes(true);
-        const notesRes = await projectsApi.getNotes(projectId, { includeSubProjects: includeSubProjectsNotes });
+        const data = await loadProjectNotesData();
+        if (cancelled) return;
+        setProjectNotes(data);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load notes:', err);
+        setProjectNotes([]);
+      } finally {
+        if (!cancelled) setLoadingNotes(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, isNew, includeSubProjectsNotes, loadProjectNotesData]);
+
+  useEffect(() => {
+    if (isNew || !projectId) return;
+    let cancelled = false;
+
+    async function fetchReferences() {
+      try {
+        setLoadingProjectReferences(true);
+        const res = await projectsApi.getReferences(projectId, {
+          includeSubProjects: includeSubProjectsReferences,
+        });
         if (!cancelled) {
-          setProjectNotes(notesRes.data || []);
+          setProjectReferences(res.data || []);
         }
       } catch (err) {
         if (!cancelled) {
-          console.error('Failed to load notes:', err);
-          setProjectNotes([]);
+          console.error('Failed to load references:', err);
+          setProjectReferences([]);
         }
       } finally {
         if (!cancelled) {
-          setLoadingNotes(false);
+          setLoadingProjectReferences(false);
         }
       }
     }
-    
-    fetchNotes();
-    return () => { cancelled = true; };
-  }, [projectId, isNew, includeSubProjectsNotes]);
+
+    fetchReferences();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, isNew, includeSubProjectsReferences]);
+
+  const refetchProjectReferences = useCallback(async () => {
+    if (isNew || !projectId) return;
+    try {
+      setLoadingProjectReferences(true);
+      const res = await projectsApi.getReferences(projectId, {
+        includeSubProjects: includeSubProjectsReferences,
+      });
+      setProjectReferences(res.data || []);
+    } catch (err) {
+      console.error('Failed to load references:', err);
+    } finally {
+      setLoadingProjectReferences(false);
+    }
+  }, [projectId, isNew, includeSubProjectsReferences]);
+
+  useEffect(() => {
+    if (isNew) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await projectsApi.list({ includeArchived: true });
+        if (!cancelled) {
+          setReferenceProjects(Array.isArray(data) ? data : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setReferenceProjects([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew]);
 
   async function handleCreateProject(e) {
     e.preventDefault();
@@ -375,13 +577,17 @@ export default function ProjectDetail() {
     
     return (
       <div className="max-w-xl mx-auto">
-        <Link to={backLink} className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block">
+        <Link
+          to={backLink}
+          replace={!!parentIdFromUrl}
+          className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block"
+        >
           ← {parentIdFromUrl ? `Back to ${parentProject?.name || 'Parent Project'}` : 'Back to Task Manager'}
         </Link>
         {parentChain.length > 0 && (
           <nav className="flex items-center gap-1 text-sm text-slate-500 mb-4 flex-wrap">
             <Link to="/tasks?tab=projects" className="hover:text-emerald-600">Projects</Link>
-            {parentChain.map((p, idx) => (
+            {parentChain.map((p) => (
               <span key={p._id} className="flex items-center gap-1">
                 <span>/</span>
                 <Link to={`/tasks/projects/${p._id}`} className="hover:text-emerald-600">{p.name}</Link>
@@ -427,7 +633,11 @@ export default function ProjectDetail() {
             >
               {parentIdFromUrl ? 'Create Sub-Project' : 'Create Project'}
             </button>
-            <Link to={backLink} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50">
+            <Link
+              to={backLink}
+              replace={!!parentIdFromUrl}
+              className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+            >
               Cancel
             </Link>
           </div>
@@ -448,7 +658,28 @@ export default function ProjectDetail() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <Link to={backLink} className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block">
+      {noteFormError && (
+        <div
+          className="fixed top-4 left-1/2 z-[200] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800 shadow-lg flex items-start justify-between gap-2"
+          role="alert"
+        >
+          <span className="min-w-0">{noteFormError}</span>
+          <button
+            type="button"
+            onClick={() => setNoteFormError(null)}
+            className="shrink-0 text-red-600 hover:text-red-800"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <Link
+        to={backLink}
+        replace={parentChain.length > 0}
+        className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block"
+      >
         {backLabel}
       </Link>
 
@@ -553,9 +784,7 @@ export default function ProjectDetail() {
             + New Sub-Project
           </Link>
         </div>
-        {subProjectsLoading ? (
-          <Loader message="Loading sub-projects..." />
-        ) : subProjects.length > 0 ? (
+        {subProjects.length > 0 ? (
           <div className="grid gap-2">
             {subProjects.map((sp, index) => {
               const spTotal = sp.totalTasks ?? 0;
@@ -564,19 +793,21 @@ export default function ProjectDetail() {
               return (
                 <div
                   key={sp._id}
-                  className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-3 hover:border-emerald-300 hover:shadow-sm transition-colors"
+                  className="relative flex items-stretch bg-white border border-slate-200 rounded-lg overflow-hidden hover:border-emerald-300 hover:shadow-sm transition-colors"
                 >
                   <Link
                     to={`/tasks/projects/${sp._id}`}
-                    className="flex-1 flex items-center justify-between"
-                  >
-                    <div>
+                    className="absolute inset-0 z-0"
+                    aria-label={`Open sub-project ${sp.name}`}
+                  />
+                  <div className="relative z-10 flex min-w-0 flex-1 items-center justify-between gap-2 p-3 pr-1 pointer-events-none">
+                    <div className="min-w-0">
                       <span className="font-medium text-slate-800">{sp.name}</span>
                       {sp.subProjectCount > 0 && (
                         <span className="ml-2 text-xs text-slate-400">({sp.subProjectCount} sub-project{sp.subProjectCount > 1 ? 's' : ''})</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-sm">
+                    <div className="flex shrink-0 items-center gap-2 text-sm">
                       <span className="text-emerald-600 font-medium">{spCompleted}/{spTotal}</span>
                       <span className="text-slate-500">{spPercent}%</span>
                       {spTotal > 0 && (
@@ -588,12 +819,13 @@ export default function ProjectDetail() {
                         </div>
                       )}
                     </div>
-                  </Link>
-                  <div className="flex items-center gap-0 ml-2">
+                  </div>
+                  <div className="relative z-10 flex items-center gap-0 self-stretch border-l border-slate-100 bg-white px-1 py-0.5 pointer-events-auto">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         moveSubProject(index, -1);
                       }}
                       disabled={index === 0}
@@ -606,6 +838,7 @@ export default function ProjectDetail() {
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         moveSubProject(index, 1);
                       }}
                       disabled={index === subProjects.length - 1}
@@ -830,9 +1063,9 @@ export default function ProjectDetail() {
 
       {/* Notes Section */}
       <div className="mt-8">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 className="text-lg font-semibold text-slate-700">Connected Notes</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <label className="flex items-center gap-2 text-sm text-slate-600">
               <input
                 type="checkbox"
@@ -842,6 +1075,22 @@ export default function ProjectDetail() {
               />
               Include sub-projects
             </label>
+            <button
+              type="button"
+              onClick={() => {
+                void openAddNote();
+              }}
+              disabled={noteFormCatalogLoading}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none text-white text-sm font-medium"
+            >
+              Add note
+            </button>
+            <Link
+              to="/notes"
+              className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              Open Notes
+            </Link>
           </div>
         </div>
         {loadingNotes ? (
@@ -851,7 +1100,17 @@ export default function ProjectDetail() {
         ) : projectNotes.length === 0 ? (
           <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
             <p className="text-slate-600 mb-2">No notes connected to this project.</p>
-            <p className="text-sm text-slate-500">Create a note and connect it to this project.</p>
+            <p className="text-sm text-slate-500 mb-4">Create a note here or from the Notes page. This project will be linked automatically.</p>
+            <button
+              type="button"
+              onClick={() => {
+                void openAddNote();
+              }}
+              disabled={noteFormCatalogLoading}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium"
+            >
+              Add note
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -879,16 +1138,145 @@ export default function ProjectDetail() {
         )}
       </div>
 
+      {/* References Section */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 className="text-lg font-semibold text-slate-700">Connected References</h2>
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={includeSubProjectsReferences}
+                onChange={(e) => setIncludeSubProjectsReferences(e.target.checked)}
+                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-200"
+              />
+              Include sub-projects
+            </label>
+            <button
+              type="button"
+              onClick={openReferenceCreateModal}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+            >
+              Add reference
+            </button>
+            <Link
+              to="/references"
+              className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              Open References
+            </Link>
+          </div>
+        </div>
+        {loadingProjectReferences ? (
+          <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-slate-500">Loading references…</p>
+          </div>
+        ) : projectReferences.length === 0 ? (
+          <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-slate-600 mb-2">No references connected to this project yet.</p>
+            <p className="text-sm text-slate-500 mb-4">
+              Add a reference here (it will link to this project), or from the References page and attach projects there.
+            </p>
+            <button
+              type="button"
+              onClick={openReferenceCreateModal}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+            >
+              Add reference
+            </button>
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {projectReferences.map((ref) => (
+              <li
+                key={ref._id}
+                className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <h3 className="font-medium text-slate-800 break-words">{ref.title}</h3>
+                  {ref.url ? (
+                    <a
+                      href={ref.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-emerald-700 hover:underline break-all"
+                    >
+                      {ref.url}
+                    </a>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await referencesApi.update(ref._id, { isFavorite: !ref.isFavorite });
+                        setProjectReferences((prev) =>
+                          prev.map((r) =>
+                            r._id === ref._id ? { ...r, isFavorite: !r.isFavorite } : r
+                          )
+                        );
+                      } catch (e) {
+                        console.error(e);
+                      }
+                    }}
+                    className={`px-2 py-1 rounded-lg text-sm border ${
+                      ref.isFavorite
+                        ? 'bg-amber-50 border-amber-200 text-amber-700'
+                        : 'bg-white border-slate-200 text-slate-500'
+                    }`}
+                    aria-pressed={!!ref.isFavorite}
+                    aria-label={ref.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    ★
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openReferenceEditModal(ref)}
+                    className="text-sm text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded-lg hover:bg-emerald-50"
+                  >
+                    Edit
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <ReferenceFormModal
+        key={editingReference?._id || 'create'}
+        open={referenceModalOpen}
+        onClose={closeReferenceModal}
+        mode={editingReference ? 'edit' : 'create'}
+        initialReference={editingReference}
+        defaultProjectIds={defaultReferenceProjectIds}
+        projects={referenceProjects}
+        onSuccess={refetchProjectReferences}
+      />
+
+      <Suspense fallback={null}>
+        <NoteForm
+          open={noteFormOpen}
+          initialNote={noteForForm}
+          categories={noteFormCategories}
+          managedCategories={noteFormManagedCategories}
+          projects={referenceProjects}
+          onClose={closeNoteForm}
+          onSubmit={handleNoteFormSubmit}
+        />
+      </Suspense>
+
       <NoteDetailView
         open={detailViewOpen}
         note={viewingNote}
-        managedCategories={[]}
+        managedCategories={noteFormCatalogReady ? noteFormManagedCategories : []}
         onClose={() => {
           setDetailViewOpen(false);
           setViewingNote(null);
         }}
         onEdit={(note) => {
-          navigate(`/notes?edit=${note._id}`);
+          void openEditNote(note);
         }}
         onDelete={(note) => {
           setConfirmModal({

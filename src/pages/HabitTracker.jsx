@@ -43,6 +43,7 @@ export default function HabitTracker() {
   const [editHabitName, setEditHabitName] = useState('');
   const [editHabitIcon, setEditHabitIcon] = useState('');
   const [confirmModal, setConfirmModal] = useState(null);
+  const [addingHabit, setAddingHabit] = useState(false);
 
   // ============ COMPUTED VALUES ============
   const currentYear = currentDate.getFullYear();
@@ -189,7 +190,7 @@ export default function HabitTracker() {
     load();
   }, [loadHabits]);
 
-  // Load stats when habits or view changes
+  // Load stats when view or date changes (not when habits list changes)
   useEffect(() => {
     if (!loading) {
       if (habits.length > 0) {
@@ -213,7 +214,6 @@ export default function HabitTracker() {
       }
     }
   }, [
-    habits.length,
     view,
     currentDate,
     loading,
@@ -233,15 +233,18 @@ export default function HabitTracker() {
     e.preventDefault();
     const name = newHabitName.trim();
     if (!name) return;
-
+    setAddingHabit(true);
+    // Clear input fields immediately for better UX
+    setNewHabitName('');
+    setNewHabitIcon('');
     try {
-      await habitsApi.create({ name, icon: newHabitIcon || '✓' });
-      setNewHabitName('');
-      setNewHabitIcon('');
-      await loadHabits();
+      const { data } = await habitsApi.create({ name, icon: newHabitIcon || '✓' });
+      setHabits((prev) => [...prev, data]);
     } catch (err) {
       console.error('Failed to add habit:', err);
       setError('Failed to add habit. Please try again.');
+    } finally {
+      setAddingHabit(false);
     }
   };
 
@@ -265,9 +268,10 @@ export default function HabitTracker() {
     if (!name) return;
 
     try {
-      await habitsApi.update(editingHabitId, { name, icon: editHabitIcon || '✓' });
+      const { data } = await habitsApi.update(editingHabitId, { name, icon: editHabitIcon || '✓' });
+      // Update optimistically in the habits list
+      setHabits((prev) => prev.map((h) => (h._id === editingHabitId ? data : h)));
       cancelEditHabit();
-      await loadHabits();
     } catch (err) {
       console.error('Failed to edit habit:', err);
       setError('Failed to edit habit. Please try again.');
@@ -353,7 +357,7 @@ export default function HabitTracker() {
 
   // ============ RENDER ============
 
-  if (loading || dataLoading) {
+  if (loading) {
     return <Loader message="Loading habits..." />;
   }
 
@@ -472,6 +476,7 @@ export default function HabitTracker() {
             placeholder="✓"
             className="w-12 rounded-lg border border-slate-300 px-2 py-2 text-center text-slate-800 placeholder-slate-400"
             maxLength={2}
+            disabled={addingHabit}
           />
           <input
             type="text"
@@ -479,13 +484,19 @@ export default function HabitTracker() {
             onChange={(e) => setNewHabitName(e.target.value)}
             placeholder="Add a new habit..."
             className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400"
+            disabled={addingHabit}
           />
           <button
             type="submit"
-            disabled={!newHabitName.trim()}
-            className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
+            disabled={addingHabit || !newHabitName.trim()}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
           >
-            Add
+            {addingHabit ? (
+              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+            ) : 'Add'}
           </button>
         </form>
 
@@ -496,6 +507,7 @@ export default function HabitTracker() {
           <ul className="space-y-2">
             {habits.map((habit, index) => (
               <li key={habit._id} className="flex items-center gap-3 bg-slate-50 rounded-lg px-3 py-2">
+                <span className="text-xs text-slate-500 font-semibold w-5 text-center">{index + 1}</span>
                 {editingHabitId === habit._id ? (
                   <>
                     <input
@@ -525,8 +537,7 @@ export default function HabitTracker() {
                 ) : (
                   <>
                     <span
-                      className={`w-3 h-3 rounded-full ${HABIT_COLORS[index % HABIT_COLORS.length].dot
-                        }`}
+                      className={`w-3 h-3 rounded-full ${HABIT_COLORS[index % HABIT_COLORS.length].dot}`}
                     ></span>
                     <span className="text-lg w-8 text-center">{habit.icon}</span>
                     <span className="flex-1 text-slate-800">{habit.name}</span>
@@ -597,8 +608,9 @@ export default function HabitTracker() {
           onToggle={(habitId, dateStr) => handleToggle(habitId, dateStr)}
           progressThresholds={{ emerald: STREAK_THRESHOLD_PERCENTAGE, amber: 50 }}
           renderColumnHeader={(habit, index) => (
-            <div className="flex items-center justify-center" title={habit.name}>
-              <span className={`w-4 h-4 rounded-full ${HABIT_COLORS[index % HABIT_COLORS.length].dot}`}></span>
+            <div className="flex flex-col items-center justify-center" title={habit.name}>
+              <span className={`w-4 h-4 rounded-full mb-1 ${HABIT_COLORS[index % HABIT_COLORS.length].dot}`}></span>
+              <span className="text-xs text-slate-500 font-semibold">{index + 1}</span>
             </div>
           )}
           view={view}

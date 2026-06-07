@@ -55,7 +55,8 @@ export default function NoteDetailView({ open, note, managedCategories = [], onC
       setLoadingProjects(true);
       try {
         const { data } = await projectsApi.list({ includeArchived: true });
-        const projects = (data || []).filter((p) => note.projectIds.includes(p._id));
+        const idSet = new Set((note.projectIds || []).map((id) => String(id)));
+        const projects = (data || []).filter((p) => idSet.has(String(p._id)));
         
         // Build project paths with parent chain
         const projectsWithPath = projects.map((project) => {

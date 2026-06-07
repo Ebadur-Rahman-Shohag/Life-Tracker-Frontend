@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { tasks as tasksApi, projects as projectsApi, habits as habitsApi, prayers as prayersApi, budget as budgetApi, notes as notesApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi, habits as habitsApi, prayers as prayersApi, budget as budgetApi, notes as notesApi, references as referencesApi } from '../api/client';
 import { toISODateString, getTodayDate } from '../lib/dateUtils';
 
 function getDayStart(d = new Date()) {
@@ -63,6 +63,11 @@ export function useDashboardData() {
     stats: null,
   });
 
+  // References data
+  const [referencesData, setReferencesData] = useState({
+    stats: null,
+  });
+
   const fetchAllData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -89,6 +94,7 @@ export function useDashboardData() {
         prayersStreakRes,
         budgetSummaryRes,
         notesStatsRes,
+        referencesStatsRes,
       ] = await Promise.allSettled([
         tasksApi.list({ date: todayStr }),
         projectsApi.list({ includeArchived: false, parentId: 'null' }),
@@ -103,6 +109,7 @@ export function useDashboardData() {
           to: toISODateString(monthEnd),
         }),
         notesApi.stats(),
+        referencesApi.stats(),
       ]);
 
       // Process tasks data
@@ -164,6 +171,12 @@ export function useDashboardData() {
         });
       }
 
+      if (referencesStatsRes.status === 'fulfilled') {
+        setReferencesData({
+          stats: referencesStatsRes.value.data,
+        });
+      }
+
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
       setError('Failed to load dashboard data');
@@ -184,6 +197,7 @@ export function useDashboardData() {
     prayersData,
     budgetData,
     notesData,
+    referencesData,
     refetch: fetchAllData,
   };
 }

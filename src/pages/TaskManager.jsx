@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
-import { tasks as tasksApi, projects as projectsApi } from '../api/client';
+import { tasks as tasksApi } from '../api/client';
+import { useProjects } from '../context/ProjectsContext';
 import ConfirmModal from '../components/ConfirmModal';
 import Loader from '../components/Loader';
 import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
 import { sortTasks } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
+
+const CLOCK_12H_STORAGE_KEY = 'lifeTrackerTasksClock12h';
+const CLOCK_CHIME_ENABLED_KEY = 'lifeTrackerTasksClockChimeEnabled';
+const CLOCK_CHIME_MODE_KEY = 'lifeTrackerTasksClockChimeMode';
+const CLOCK_CHIME_MINUTE_KEY = 'lifeTrackerTasksClockChimeMinute';
+const CLOCK_CHIME_DAILY_KEY = 'lifeTrackerTasksClockChimeDaily';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -28,22 +35,157 @@ function formatDateDisplay(dateStr) {
   return `${day}/${month}/${year.slice(2)}`;
 }
 
+function readClockHour12() {
+  try {
+    const v = localStorage.getItem(CLOCK_12H_STORAGE_KEY);
+    if (v === 'false') return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function persistClockHour12(hour12) {
+  try {
+    localStorage.setItem(CLOCK_12H_STORAGE_KEY, hour12 ? 'true' : 'false');
+  } catch {
+    /* ignore */
+  }
+}
+
+function readChimeEnabled() {
+  try {
+    if (localStorage.getItem(CLOCK_CHIME_ENABLED_KEY) === 'false') return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function persistChimeEnabled(v) {
+  try {
+    localStorage.setItem(CLOCK_CHIME_ENABLED_KEY, v ? 'true' : 'false');
+  } catch {
+    /* ignore */
+  }
+}
+
+function readChimeMode() {
+  try {
+    const v = localStorage.getItem(CLOCK_CHIME_MODE_KEY);
+    if (v === 'daily') return 'daily';
+  } catch {
+    /* ignore */
+  }
+  return 'eachHour';
+}
+
+function persistChimeMode(mode) {
+  try {
+    localStorage.setItem(CLOCK_CHIME_MODE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
+function clampChimeMinute(n) {
+  const x = Math.floor(Number(n));
+  if (Number.isNaN(x)) return 0;
+  return Math.min(59, Math.max(0, x));
+}
+
+function readChimeMinute() {
+  try {
+    return clampChimeMinute(localStorage.getItem(CLOCK_CHIME_MINUTE_KEY) ?? '0');
+  } catch {
+    return 0;
+  }
+}
+
+function persistChimeMinute(n) {
+  try {
+    localStorage.setItem(CLOCK_CHIME_MINUTE_KEY, String(clampChimeMinute(n)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function readChimeDailyTime() {
+  try {
+    const v = localStorage.getItem(CLOCK_CHIME_DAILY_KEY);
+    if (typeof v === 'string' && /^\d{1,2}:\d{2}$/.test(v)) {
+      const [h, m] = v.split(':').map(Number);
+      if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return '12:00';
+}
+
+function persistChimeDailyTime(hhmm) {
+  try {
+    if (typeof hhmm === 'string' && /^\d{1,2}:\d{2}$/.test(hhmm)) {
+      const [h, m] = hhmm.split(':').map(Number);
+      if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+        const s = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        localStorage.setItem(CLOCK_CHIME_DAILY_KEY, s);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatDigitalTime(d, hour12) {
+  return d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12,
+  });
+}
+
+/** Speak the current time (scheduled from clock settings on Task Manager). */
+function speakHourlyTime(d, hour12) {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  const timeStr = formatDigitalTime(d, hour12);
+  const u = new SpeechSynthesisUtterance(`The time is ${timeStr}.`);
+  if (typeof navigator !== 'undefined' && navigator.language) u.lang = navigator.language;
+  try {
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function TaskManager() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
   const tab = searchParams.get('tab') || 'today';
   const [dailyTasks, setDailyTasks] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [archivedProjects, setArchivedProjects] = useState([]);
+  const {
+    projects,
+    archivedProjects,
+    projectsLoading,
+    setProjectsLoading,
+    projectsLoaded,
+    fetchProjects,
+    addOptimisticProject,
+    deleteProject,
+  } = useProjects();
   const [showArchived, setShowArchived] = useState(false);
   const [date, setDate] = useState(getLocalDateString());
   const [loading, setLoading] = useState(true);
-  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [dailyLoading, setDailyLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [newTaskRecurrence, setNewTaskRecurrence] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [addingTask, setAddingTask] = useState(false);
   const [searchToday, setSearchToday] = useState('');
   const [searchProjects, setSearchProjects] = useState('');
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -51,21 +193,100 @@ export default function TaskManager() {
   const [editTaskPriority, setEditTaskPriority] = useState('medium');
   const [editTaskRecurrence, setEditTaskRecurrence] = useState('');
   const [confirmModal, setConfirmModal] = useState(null);
+  const [now, setNow] = useState(() => new Date());
+  const [clockHour12, setClockHour12] = useState(readClockHour12);
+  const [chimeEnabled, setChimeEnabled] = useState(readChimeEnabled);
+  const [chimeMode, setChimeMode] = useState(readChimeMode);
+  const [chimeMinute, setChimeMinute] = useState(readChimeMinute);
+  const [chimeDailyTime, setChimeDailyTime] = useState(readChimeDailyTime);
+  const [clockSettingsOpen, setClockSettingsOpen] = useState(false);
   const addInputRef = useRef(null);
+  const clockMenuRef = useRef(null);
+  const lastChimeKeyRef = useRef(null);
+
+  // Synchronously reset today-tab state when switching tabs, before any paint.
+  // useEffect runs *after* paint, which causes a one-frame stale-data flash.
+  // Calling setState during render makes React discard the render and immediately
+  // re-render with the correct state before committing to the DOM.
+  const [prevTab, setPrevTab] = useState(tab);
+  if (prevTab !== tab) {
+    setPrevTab(tab);
+    if (tab === 'today') {
+      setDailyTasks([]);
+      setDailyLoading(true);
+    }
+    if (tab === 'projects') {
+      setProjectsLoading(true);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     async function fetchDaily() {
+      setDailyLoading(true);
       try {
         const { data } = await tasksApi.list({ date });
         if (!cancelled) setDailyTasks(data);
       } catch {
         if (!cancelled) setDailyTasks([]);
+      } finally {
+        if (!cancelled) setDailyLoading(false);
       }
     }
     if (tab === 'today') fetchDaily();
     return () => { cancelled = true; };
   }, [tab, date]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const next = new Date();
+      if (chimeEnabled) {
+        const s = next.getSeconds();
+        if (s === 0) {
+          if (chimeMode === 'eachHour') {
+            if (next.getMinutes() === chimeMinute) {
+              const key = `h-${next.getFullYear()}-${next.getMonth()}-${next.getDate()}-${next.getHours()}`;
+              if (lastChimeKeyRef.current !== key) {
+                lastChimeKeyRef.current = key;
+                speakHourlyTime(next, clockHour12);
+              }
+            }
+          } else {
+            const parts = chimeDailyTime.split(':');
+            const dh = parseInt(parts[0], 10);
+            const dm = parseInt(parts[1], 10);
+            if (!Number.isNaN(dh) && !Number.isNaN(dm) && next.getHours() === dh && next.getMinutes() === dm) {
+              const key = `d-${next.getFullYear()}-${next.getMonth()}-${next.getDate()}`;
+              if (lastChimeKeyRef.current !== key) {
+                lastChimeKeyRef.current = key;
+                speakHourlyTime(next, clockHour12);
+              }
+            }
+          }
+        }
+      }
+      setNow(next);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [clockHour12, chimeEnabled, chimeMode, chimeMinute, chimeDailyTime]);
+
+  useEffect(() => {
+    if (!clockSettingsOpen) return;
+    function onPointerDown(e) {
+      if (clockMenuRef.current && !clockMenuRef.current.contains(e.target)) {
+        setClockSettingsOpen(false);
+      }
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setClockSettingsOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [clockSettingsOpen]);
 
   useEffect(() => {
     if (tab !== 'today') return;
@@ -86,12 +307,21 @@ export default function TaskManager() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [tab]);
 
+  const newProject = location.state?.newProject;
+  const newProjectId = newProject?._id;
+
   useEffect(() => {
     if (tab !== 'projects') return;
     let cancelled = false;
 
-    // Capture and clear navigation state (new project created)
-    const newProject = location.state?.newProject;
+    if (newProject && !newProject.parentId) {
+      addOptimisticProject(newProject);
+    }
+
+    if (!projectsLoaded && !projectsLoading) {
+      fetchProjects();
+    }
+
     if (newProject) {
       navigate(location.pathname + location.search, { replace: true, state: {} });
     }
@@ -126,7 +356,7 @@ export default function TaskManager() {
     }
     fetchProjects();
     return () => { cancelled = true; };
-  }, [tab]);
+  }, [tab, newProjectId, projectsLoaded, projectsLoading, fetchProjects, addOptimisticProject, navigate, location.pathname, location.search]);
 
   useEffect(() => {
     setLoading(false);
@@ -136,7 +366,10 @@ export default function TaskManager() {
     e.preventDefault();
     const title = newTaskTitle.trim();
     if (!title) return;
-    setAdding(true);
+    setAddingTask(true);
+    // Clear input fields immediately for better UX
+    setNewTaskTitle('');
+    setNewTaskRecurrence('');
     try {
       const payload = { title, priority: newTaskPriority };
       if (newTaskRecurrence) {
@@ -146,13 +379,11 @@ export default function TaskManager() {
       }
       const { data } = await tasksApi.create(payload);
       setDailyTasks((prev) => [...prev, data]);
-      setNewTaskTitle('');
-      setNewTaskRecurrence('');
       addInputRef.current?.focus();
     } catch (err) {
       console.error(err);
     } finally {
-      setAdding(false);
+      setAddingTask(false);
     }
   }
 
@@ -251,7 +482,7 @@ export default function TaskManager() {
       : taskCount > 0
         ? `Are you sure you want to delete "${project.name}" and its ${taskCount} task(s)?`
         : `Are you sure you want to delete "${project.name}"?`;
-    
+
     setConfirmModal({
       open: true,
       title: 'Delete Project',
@@ -261,12 +492,7 @@ export default function TaskManager() {
       variant: 'danger',
       onConfirm: async () => {
         try {
-          await projectsApi.delete(project._id);
-          if (isArchived) {
-            setArchivedProjects((prev) => prev.filter((p) => p._id !== project._id));
-          } else {
-            setProjects((prev) => prev.filter((p) => p._id !== project._id));
-          }
+          await deleteProject(project._id, isArchived);
           setConfirmModal(null);
         } catch (err) {
           console.error(err);
@@ -310,7 +536,165 @@ export default function TaskManager() {
 
   return (
     <div className="max-w-7xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-800 mb-4">Task Manager</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h1 className="text-2xl font-bold text-slate-800">Task Manager</h1>
+        <div className="relative" ref={clockMenuRef}>
+          <div className="flex items-stretch rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <time
+              dateTime={now.toISOString()}
+              className="inline-flex items-center text-lg sm:text-xl font-mono font-semibold tabular-nums tracking-wide text-slate-800 pl-3 pr-2 sm:pl-4 sm:pr-3 py-2"
+            >
+              {formatDigitalTime(now, clockHour12)}
+            </time>
+            <button
+              type="button"
+              onClick={() => setClockSettingsOpen((o) => !o)}
+              className="flex items-center justify-center border-l border-slate-200 px-2.5 text-slate-500 hover:text-emerald-600 hover:bg-slate-50 transition-colors"
+              aria-label="Clock and voice settings"
+              aria-expanded={clockSettingsOpen}
+              aria-haspopup="true"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-5 h-5"
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.65.87.3.17.64.25.99.18l1.3-.3c.54-.12 1.01.2 1.19.7l.9 1.8c.18.5.05 1.07-.4 1.4l-1.02.7c-.28.2-.45.5-.45.8v.9c0 .3.17.6.45.8l1.02.7c.45.3.58.9.4 1.4l-.9 1.8c-.18.5-.64.82-1.19.7l-1.3-.3a1.2 1.2 0 01-1.02.18c-.32-.1-.6-.3-.7-.6l-.3-1.2c-.1-.3-.3-.5-.5-.6-.3-.1-.6-.1-.9 0l-1.2.3c-.3.1-.6 0-.8-.2l-1-1.7c-.2-.2-.2-.5-.1-.8l.5-1.1c.1-.3 0-.6-.1-.8l-1-1.7c-.2-.2-.1-.5.1-.7l.9-1.5c.2-.2.4-.3.7-.2l1.2.2c.3.1.6 0 .9-.1.3-.2.4-.4.4-.7l.1-1.3z"
+                />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+          {clockSettingsOpen && (
+            <div
+              className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+              role="menu"
+            >
+              <p className="px-3 pt-2 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">Display</p>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={clockHour12}
+                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${clockHour12 ? 'bg-emerald-50 text-emerald-800 font-medium' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                onClick={() => {
+                  setClockHour12(true);
+                  persistClockHour12(true);
+                }}
+              >
+                12 hour
+                {clockHour12 && <span className="text-emerald-600">✓</span>}
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={!clockHour12}
+                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${!clockHour12 ? 'bg-emerald-50 text-emerald-800 font-medium' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                onClick={() => {
+                  setClockHour12(false);
+                  persistClockHour12(false);
+                }}
+              >
+                24 hour
+                {!clockHour12 && <span className="text-emerald-600">✓</span>}
+              </button>
+
+              <div className="my-1 border-t border-slate-100" />
+              <p className="px-3 pt-1 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">Voice call</p>
+              <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                <input
+                  type="checkbox"
+                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  checked={chimeEnabled}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setChimeEnabled(v);
+                    persistChimeEnabled(v);
+                  }}
+                />
+                Enable spoken time
+              </label>
+              <div className="px-3 py-1.5 text-xs text-slate-500">When to announce</div>
+              <div className="flex gap-1 px-2 pb-1">
+                <button
+                  type="button"
+                  className={`flex-1 rounded-md px-2 py-1.5 text-center text-xs font-medium ${chimeMode === 'eachHour'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  onClick={() => {
+                    setChimeMode('eachHour');
+                    persistChimeMode('eachHour');
+                  }}
+                >
+                  Every hour
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 rounded-md px-2 py-1.5 text-center text-xs font-medium ${chimeMode === 'daily'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  onClick={() => {
+                    setChimeMode('daily');
+                    persistChimeMode('daily');
+                  }}
+                >
+                  Once a day
+                </button>
+              </div>
+              {chimeMode === 'eachHour' ? (
+                <div className="px-3 pb-3">
+                  <label className="mb-1 block text-xs text-slate-600" htmlFor="chime-minute">
+                    At minute past each hour (0–59)
+                  </label>
+                  <input
+                    id="chime-minute"
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={chimeMinute}
+                    onChange={(e) => {
+                      const v = clampChimeMinute(e.target.value);
+                      setChimeMinute(v);
+                      persistChimeMinute(v);
+                    }}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
+                  />
+                </div>
+              ) : (
+                <div className="px-3 pb-3">
+                  <label className="mb-1 block text-xs text-slate-600" htmlFor="chime-daily">
+                    Local time
+                  </label>
+                  <input
+                    id="chime-daily"
+                    type="time"
+                    step={60}
+                    value={chimeDailyTime}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v) {
+                        setChimeDailyTime(v);
+                        persistChimeDailyTime(v);
+                      }
+                    }}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="flex gap-2 mb-6">
         <button
@@ -403,10 +787,15 @@ export default function TaskManager() {
             </select>
             <button
               type="submit"
-              disabled={adding || !newTaskTitle.trim()}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
+              disabled={addingTask || !newTaskTitle.trim()}
+              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
             >
-              Add
+              {addingTask ? (
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                </svg>
+              ) : 'Add'}
             </button>
           </form>
           <ul className="space-y-2">
@@ -537,7 +926,8 @@ export default function TaskManager() {
               );
             })}
           </ul>
-          {dailyTasks.length === 0 && !loading && (
+          {dailyLoading && <Loader message="Loading tasks..." />}
+          {!dailyLoading && dailyTasks.length === 0 && (
             <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
               <p className="text-slate-600 mb-2">No tasks for this day.</p>
               <p className="text-sm text-slate-500 mb-4">Add your first task above to get started.</p>
@@ -564,7 +954,7 @@ export default function TaskManager() {
               value={searchProjects}
               onChange={(e) => setSearchProjects(e.target.value)}
               placeholder="Search projects..."
-              className="rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 text-sm w-48"
+              className="flex-1 min-w-60 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder-slate-400 text-sm"
             />
             <Link
               to="/tasks/projects/new"
@@ -585,12 +975,12 @@ export default function TaskManager() {
               return (
                 <div
                   key={project._id}
-                  className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors"
+                  onClick={() => navigate(`/tasks/projects/${project._id}`)}
+                  className="block bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-emerald-300 hover:shadow transition-colors cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <h2 
-                      onClick={() => navigate(`/tasks/projects/${project._id}`)}
-                      className="font-semibold text-slate-800 cursor-pointer flex-1"
+                    <h2
+                      className="font-semibold text-slate-800 flex-1"
                     >
                       {project.name}
                     </h2>
@@ -639,15 +1029,14 @@ export default function TaskManager() {
                   {project.description && (
                     <p className="text-sm text-slate-500 mt-1">{project.description}</p>
                   )}
-                  <div 
-                    onClick={() => navigate(`/tasks/projects/${project._id}`)}
-                    className="mt-3 flex items-center gap-2 cursor-pointer"
+                  <div
+                    className="mt-3 flex items-center gap-2"
                   >
                     <span className="text-sm font-medium text-emerald-600">{completed}/{total}</span>
                     <span className="text-sm text-slate-500">tasks</span>
                     <span className="text-sm font-bold text-slate-700">{percent}%</span>
                     {total > 0 && (
-                      <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden max-w-[120px]">
+                      <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden max-w-30">
                         <div
                           className="h-full bg-emerald-500 rounded-full transition-all"
                           style={{ width: `${percent}%` }}
