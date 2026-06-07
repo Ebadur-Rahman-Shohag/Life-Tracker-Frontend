@@ -80,24 +80,39 @@ function ProjectOption({ project, level = 0, selected, onToggle, searchTerm }) {
   );
 }
 
-export default function ProjectSelector({ selected = [], onChange, onClose }) {
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function ProjectSelector({ selected = [], onChange, onClose, projects: externalProjects }) {
+  const [fetchedProjects, setFetchedProjects] = useState([]);
+  const [loading, setLoading] = useState(externalProjects == null);
   const [searchTerm, setSearchTerm] = useState('');
+  const projects = externalProjects ?? fetchedProjects;
 
   useEffect(() => {
+    if (externalProjects != null) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
     async function loadProjects() {
       try {
         const { data } = await projectsApi.list({ includeArchived: true });
-        setProjects(data || []);
+        if (!cancelled) {
+          setFetchedProjects(data || []);
+        }
       } catch (err) {
-        console.error('Failed to load projects:', err);
+        if (!cancelled) {
+          console.error('Failed to load projects:', err);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
     loadProjects();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [externalProjects]);
 
   const hierarchy = useMemo(() => buildProjectHierarchy(projects), [projects]);
 

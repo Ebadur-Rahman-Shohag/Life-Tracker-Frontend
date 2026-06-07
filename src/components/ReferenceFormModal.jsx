@@ -209,6 +209,7 @@ export default function ReferenceFormModal({
                     selected={selectedProjectIds}
                     onChange={setSelectedProjectIds}
                     onClose={() => setShowProjectSelector(false)}
+                    projects={projects}
                   />
                 </div>
               )}

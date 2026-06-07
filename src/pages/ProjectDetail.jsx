@@ -1,17 +1,13 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
 import { projects as projectsApi, tasks as tasksApi, notes as notesApi, references as referencesApi } from '../api/client';
 import { buildCategoryList, fetchNoteFormCatalog } from '../lib/noteFormResources';
 import Loader from '../components/Loader';
-import NoteDetailView from '../components/NoteDetailView';
-import ConfirmModal from '../components/ConfirmModal';
+import ProjectPageModals from '../components/ProjectPageModals';
 import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
 import { sortTasks } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
-import ReferenceFormModal from '../components/ReferenceFormModal';
-
-const NoteForm = lazy(() => import('../components/NoteForm'));
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -80,8 +76,8 @@ export default function ProjectDetail() {
   const [noteFormStats, setNoteFormStats] = useState(null);
   const [noteFormManagedCategories, setNoteFormManagedCategories] = useState([]);
   const [noteFormCatalogReady, setNoteFormCatalogReady] = useState(false);
-  const [noteFormCatalogLoading, setNoteFormCatalogLoading] = useState(false);
   const [noteFormError, setNoteFormError] = useState(null);
+  const noteFormCatalogPromiseRef = useRef(null);
 
   const noteFormCategories = useMemo(
     () => buildCategoryList(noteFormManagedCategories, noteFormStats),
@@ -109,53 +105,70 @@ export default function ProjectDetail() {
 
   const ensureNoteFormCatalog = useCallback(async () => {
     if (noteFormCatalogReady) return;
-    setNoteFormCatalogLoading(true);
-    try {
-      const { stats, managedCategories } = await fetchNoteFormCatalog(notesApi);
-      setNoteFormStats(stats);
-      setNoteFormManagedCategories(managedCategories);
-      setNoteFormCatalogReady(true);
-    } finally {
-      setNoteFormCatalogLoading(false);
+    if (noteFormCatalogPromiseRef.current) {
+      return noteFormCatalogPromiseRef.current;
     }
+
+    const promise = (async () => {
+      try {
+        const { stats, managedCategories } = await fetchNoteFormCatalog(notesApi);
+        setNoteFormStats(stats);
+        setNoteFormManagedCategories(managedCategories);
+        setNoteFormCatalogReady(true);
+      } finally {
+        noteFormCatalogPromiseRef.current = null;
+      }
+    })();
+
+    noteFormCatalogPromiseRef.current = promise;
+    return promise;
   }, [noteFormCatalogReady]);
 
-  const openAddNote = useCallback(async () => {
+  useEffect(() => {
+    if (isNew) return;
+    void import('../components/NoteForm');
+    ensureNoteFormCatalog().catch((err) => {
+      console.error('Failed to prefetch note form catalog:', err);
+    });
+  }, [isNew, ensureNoteFormCatalog]);
+
+  const openAddNote = useCallback(() => {
     if (isNew || !projectId) return;
     setNoteFormError(null);
-    try {
-      await ensureNoteFormCatalog();
-      setNoteForForm({
-        projectIds: [projectId],
-        title: '',
-        content: '',
-        category: 'Uncategorized',
-        isFavorite: false,
-        tags: [],
-      });
-      setNoteFormOpen(true);
-    } catch (err) {
+    setNoteForForm({
+      projectIds: [projectId],
+      title: '',
+      content: '',
+      category: 'Uncategorized',
+      isFavorite: false,
+      tags: [],
+    });
+    setNoteFormOpen(true);
+    ensureNoteFormCatalog().catch((err) => {
       console.error('Failed to load note form data:', err);
       setNoteFormError('Failed to load categories. Please try again.');
-    }
+    });
   }, [isNew, projectId, ensureNoteFormCatalog]);
 
   const openEditNote = useCallback(
-    async (note) => {
+    (note) => {
       setNoteFormError(null);
-      try {
-        await ensureNoteFormCatalog();
-        setNoteForForm(note);
-        setNoteFormOpen(true);
-        setDetailViewOpen(false);
-        setViewingNote(null);
-      } catch (err) {
+      setNoteForForm(note);
+      setNoteFormOpen(true);
+      setDetailViewOpen(false);
+      setViewingNote(null);
+      ensureNoteFormCatalog().catch((err) => {
         console.error('Failed to load note form data:', err);
         setNoteFormError('Failed to load categories. Please try again.');
-      }
+      });
     },
     [ensureNoteFormCatalog]
   );
+
+  const closeDetailView = useCallback(() => {
+    setDetailViewOpen(false);
+    setViewingNote(null);
+  }, []);
 
   const closeNoteForm = useCallback(() => {
     setNoteFormOpen(false);
@@ -163,40 +176,92 @@ export default function ProjectDetail() {
     setNoteFormError(null);
   }, []);
 
-  async function handleNoteFormSubmit(payload) {
-    if (!noteForForm) return;
-    setNoteFormError(null);
-    try {
-      if (noteForForm._id) {
-        await notesApi.update(noteForForm._id, payload);
-      } else {
-        await notesApi.create(payload);
+  const handleNoteFormSubmit = useCallback(
+    async (payload) => {
+      if (!noteForForm) return;
+      setNoteFormError(null);
+      try {
+        if (noteForForm._id) {
+          await notesApi.update(noteForForm._id, payload);
+        } else {
+          await notesApi.create(payload);
+        }
+        closeNoteForm();
+        await refetchProjectNotes();
+      } catch (err) {
+        const msg =
+          err.response?.data?.errors?.[0]?.msg ||
+          err.response?.data?.message ||
+          (err instanceof Error ? err.message : 'Failed to save note.');
+        setNoteFormError(msg);
       }
-      closeNoteForm();
-      await refetchProjectNotes();
-    } catch (err) {
-      const msg =
-        err.response?.data?.errors?.[0]?.msg ||
-        err.response?.data?.message ||
-        (err instanceof Error ? err.message : 'Failed to save note.');
-      setNoteFormError(msg);
-    }
-  }
+    },
+    [noteForForm, closeNoteForm, refetchProjectNotes]
+  );
 
-  function openReferenceCreateModal() {
+  const openReferenceCreateModal = useCallback(() => {
     setEditingReference(null);
     setReferenceModalOpen(true);
-  }
+  }, []);
 
-  function openReferenceEditModal(ref) {
+  const openReferenceEditModal = useCallback((ref) => {
     setEditingReference(ref);
     setReferenceModalOpen(true);
-  }
+  }, []);
 
-  function closeReferenceModal() {
+  const closeReferenceModal = useCallback(() => {
     setReferenceModalOpen(false);
     setEditingReference(null);
-  }
+  }, []);
+
+  const handleDeleteNote = useCallback((note) => {
+    setConfirmModal({
+      open: true,
+      title: 'Delete Note',
+      message: `Are you sure you want to delete "${note.title}"? This action cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await notesApi.delete(note._id);
+          setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
+          setDetailViewOpen(false);
+          setViewingNote(null);
+          setConfirmModal(null);
+        } catch (err) {
+          console.error('Failed to delete note:', err);
+          setConfirmModal(null);
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
+  }, []);
+
+  const handleToggleFavoriteNote = useCallback(async (note) => {
+    try {
+      await notesApi.toggleFavorite(note._id);
+      setProjectNotes((prev) =>
+        prev.map((n) => (n._id === note._id ? { ...n, isFavorite: !n.isFavorite } : n))
+      );
+      setViewingNote((current) =>
+        current?._id === note._id ? { ...current, isFavorite: !current.isFavorite } : current
+      );
+    } catch (err) {
+      console.error('Failed to toggle favorite:', err);
+    }
+  }, []);
+
+  const handleToggleArchiveNote = useCallback(async (note) => {
+    try {
+      await notesApi.toggleArchive(note._id);
+      setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
+      setDetailViewOpen(false);
+      setViewingNote(null);
+    } catch (err) {
+      console.error('Failed to toggle archive:', err);
+    }
+  }, []);
   const [confirmModal, setConfirmModal] = useState(null);
 
   // When projectId changes, show loading before paint so we do not render one frame of the previous
@@ -1077,11 +1142,8 @@ export default function ProjectDetail() {
             </label>
             <button
               type="button"
-              onClick={() => {
-                void openAddNote();
-              }}
-              disabled={noteFormCatalogLoading}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none text-white text-sm font-medium"
+              onClick={openAddNote}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
             >
               Add note
             </button>
@@ -1103,11 +1165,8 @@ export default function ProjectDetail() {
             <p className="text-sm text-slate-500 mb-4">Create a note here or from the Notes page. This project will be linked automatically.</p>
             <button
               type="button"
-              onClick={() => {
-                void openAddNote();
-              }}
-              disabled={noteFormCatalogLoading}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium"
+              onClick={openAddNote}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
             >
               Add note
             </button>
@@ -1244,100 +1303,29 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      <ReferenceFormModal
-        key={editingReference?._id || 'create'}
-        open={referenceModalOpen}
-        onClose={closeReferenceModal}
-        mode={editingReference ? 'edit' : 'create'}
-        initialReference={editingReference}
-        defaultProjectIds={defaultReferenceProjectIds}
-        projects={referenceProjects}
-        onSuccess={refetchProjectReferences}
+      <ProjectPageModals
+        referenceModalOpen={referenceModalOpen}
+        editingReference={editingReference}
+        closeReferenceModal={closeReferenceModal}
+        defaultReferenceProjectIds={defaultReferenceProjectIds}
+        referenceProjects={referenceProjects}
+        refetchProjectReferences={refetchProjectReferences}
+        noteFormOpen={noteFormOpen}
+        noteForForm={noteForForm}
+        noteFormCategories={noteFormCategories}
+        noteFormManagedCategories={noteFormManagedCategories}
+        noteFormCatalogReady={noteFormCatalogReady}
+        closeNoteForm={closeNoteForm}
+        handleNoteFormSubmit={handleNoteFormSubmit}
+        detailViewOpen={detailViewOpen}
+        viewingNote={viewingNote}
+        closeDetailView={closeDetailView}
+        openEditNote={openEditNote}
+        onDeleteNote={handleDeleteNote}
+        onToggleFavoriteNote={handleToggleFavoriteNote}
+        onToggleArchiveNote={handleToggleArchiveNote}
+        confirmModal={confirmModal}
       />
-
-      <Suspense fallback={null}>
-        <NoteForm
-          open={noteFormOpen}
-          initialNote={noteForForm}
-          categories={noteFormCategories}
-          managedCategories={noteFormManagedCategories}
-          projects={referenceProjects}
-          onClose={closeNoteForm}
-          onSubmit={handleNoteFormSubmit}
-        />
-      </Suspense>
-
-      <NoteDetailView
-        open={detailViewOpen}
-        note={viewingNote}
-        managedCategories={noteFormCatalogReady ? noteFormManagedCategories : []}
-        onClose={() => {
-          setDetailViewOpen(false);
-          setViewingNote(null);
-        }}
-        onEdit={(note) => {
-          void openEditNote(note);
-        }}
-        onDelete={(note) => {
-          setConfirmModal({
-            open: true,
-            title: 'Delete Note',
-            message: `Are you sure you want to delete "${note.title}"? This action cannot be undone.`,
-            confirmText: 'Delete',
-            cancelText: 'Cancel',
-            variant: 'danger',
-            onConfirm: async () => {
-              try {
-                await notesApi.delete(note._id);
-                setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
-                setDetailViewOpen(false);
-                setViewingNote(null);
-                setConfirmModal(null);
-              } catch (err) {
-                console.error('Failed to delete note:', err);
-                setConfirmModal(null);
-              }
-            },
-            onCancel: () => setConfirmModal(null),
-          });
-        }}
-        onToggleFavorite={async (note) => {
-          try {
-            await notesApi.toggleFavorite(note._id);
-            setProjectNotes((prev) =>
-              prev.map((n) => (n._id === note._id ? { ...n, isFavorite: !n.isFavorite } : n))
-            );
-            if (viewingNote?._id === note._id) {
-              setViewingNote({ ...viewingNote, isFavorite: !viewingNote.isFavorite });
-            }
-          } catch (err) {
-            console.error('Failed to toggle favorite:', err);
-          }
-        }}
-        onToggleArchive={async (note) => {
-          try {
-            await notesApi.toggleArchive(note._id);
-            setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
-            setDetailViewOpen(false);
-            setViewingNote(null);
-          } catch (err) {
-            console.error('Failed to toggle archive:', err);
-          }
-        }}
-      />
-
-      {confirmModal && (
-        <ConfirmModal
-          open={confirmModal.open}
-          title={confirmModal.title}
-          message={confirmModal.message}
-          confirmText={confirmModal.confirmText}
-          cancelText={confirmModal.cancelText}
-          variant={confirmModal.variant}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={confirmModal.onCancel}
-        />
-      )}
     </div>
   );
 }

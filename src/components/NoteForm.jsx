@@ -35,7 +35,16 @@ function textToTipTapJSON(text) {
   };
 }
 
-export default function NoteForm({ open, initialNote, categories, managedCategories = [], projects = [], onClose, onSubmit }) {
+export default function NoteForm({
+  open,
+  initialNote,
+  categories,
+  managedCategories = [],
+  projects = [],
+  catalogLoading = false,
+  onClose,
+  onSubmit,
+}) {
   const isEdit = !!initialNote?._id;
 
   const categoryOptions = useMemo(() => {
@@ -168,17 +177,24 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  disabled={catalogLoading}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-500"
                 >
-                  <option value="Uncategorized">Uncategorized</option>
-                  {categoryOptions.map((c) => {
-                    const icon = getCategoryIcon(c);
-                    return (
-                      <option key={c} value={c}>
-                        {icon ? `${icon} ${c}` : c}
-                      </option>
-                    );
-                  })}
+                  {catalogLoading ? (
+                    <option value={category}>Loading categories…</option>
+                  ) : (
+                    <>
+                      <option value="Uncategorized">Uncategorized</option>
+                      {categoryOptions.map((c) => {
+                        const icon = getCategoryIcon(c);
+                        return (
+                          <option key={c} value={c}>
+                            {icon ? `${icon} ${c}` : c}
+                          </option>
+                        );
+                      })}
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -213,6 +229,7 @@ export default function NoteForm({ open, initialNote, categories, managedCategor
                         selected={selectedProjectIds}
                         onChange={setSelectedProjectIds}
                         onClose={() => setShowProjectSelector(false)}
+                        projects={projects}
                       />
                     </div>
                   )}
