@@ -1,9 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
 import { projects as projectsApi, tasks as tasksApi, notes as notesApi } from '../api/client';
 import Loader from '../components/Loader';
 import NoteDetailView from '../components/NoteDetailView';
 import ConfirmModal from '../components/ConfirmModal';
+import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
+import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
+import { sortTasks } from '../lib/taskUtils';
+import TaskPositionInput from '../components/TaskPositionInput';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -120,7 +124,7 @@ export default function ProjectDetail() {
         let subProjectsList = proj.subProjects || [];
         if (newSubProject && newSubProject.parentId === projectId && !subProjectsList.some((sp) => sp._id === newSubProject._id)) {
           // API response doesn't include the just-created sub-project yet, merge it in
-          subProjectsList = [{ ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...subProjectsList];
+          subProjectsList = [...subProjectsList, { ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }];
         }
         setSubProjects(subProjectsList);
         setParentChain(proj.parentChain || []);
@@ -291,14 +295,15 @@ export default function ProjectDetail() {
     }
   }
 
-  async function toggleTask(task) {
-    try {
-      const { data } = await tasksApi.update(task._id, { completed: !task.completed });
-      setProjectTasks((prev) => prev.map((t) => (t._id === task._id ? data : t)));
-    } catch (err) {
-      console.error(err);
-    }
-  }
+  const buildTogglePayload = useCallback((_task, completed) => ({ completed }), []);
+  const toggleTask = useOptimisticTaskToggle({
+    setTasks: setProjectTasks,
+    buildUpdatePayload: buildTogglePayload,
+  });
+  const { moveTask, moveTaskToPosition } = useOptimisticTaskReorder({
+    setTasks: setProjectTasks,
+    sortTasks,
+  });
 
   async function deleteTask(task) {
     try {
@@ -328,50 +333,31 @@ export default function ProjectDetail() {
   async function saveEditTask(task) {
     const title = editTaskTitle.trim();
     if (!title) return;
+
+    const payload = {
+      title,
+      priority: editTaskPriority,
+      notes: editTaskNotes.trim(),
+      dueDate: editTaskDueDate ? new Date(editTaskDueDate).toISOString() : null,
+    };
+
+    const optimisticTask = {
+      ...task,
+      title,
+      priority: editTaskPriority,
+      notes: editTaskNotes.trim(),
+      dueDate: payload.dueDate,
+    };
+
+    const snapshot = projectTasks;
+    setProjectTasks((prev) => prev.map((t) => (t._id === task._id ? optimisticTask : t)));
+    cancelEditTask();
+
     try {
-      const payload = {
-        title,
-        priority: editTaskPriority,
-        notes: editTaskNotes.trim(),
-      };
-      if (editTaskDueDate) {
-        payload.dueDate = new Date(editTaskDueDate).toISOString();
-      } else {
-        payload.dueDate = null;
-      }
       const { data } = await tasksApi.update(task._id, payload);
       setProjectTasks((prev) => prev.map((t) => (t._id === task._id ? data : t)));
-      cancelEditTask();
     } catch (err) {
-      console.error(err);
-    }
-  }
-
-  async function moveTask(task, direction) {
-    const sorted = [...projectTasks].sort((a, b) => {
-      const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      if (aDue !== bDue) return aDue - bDue;
-      return (a.order || 0) - (b.order || 0);
-    });
-    const idx = sorted.findIndex((t) => t._id === task._id);
-    if (idx < 0) return;
-    const otherIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (otherIdx < 0 || otherIdx >= sorted.length) return;
-    const other = sorted[otherIdx];
-    try {
-      await Promise.all([
-        tasksApi.update(task._id, { order: other.order ?? otherIdx }),
-        tasksApi.update(other._id, { order: task.order ?? idx }),
-      ]);
-      setProjectTasks((prev) => {
-        const next = [...prev];
-        const i = next.findIndex((t) => t._id === task._id);
-        const j = next.findIndex((t) => t._id === other._id);
-        if (i >= 0 && j >= 0) [next[i], next[j]] = [next[j], next[i]];
-        return next;
-      });
-    } catch (err) {
+      setProjectTasks(snapshot);
       console.error(err);
     }
   }
@@ -682,14 +668,7 @@ export default function ProjectDetail() {
       </form>
 
       <ul className="space-y-2">
-        {[...projectTasks]
-          .sort((a, b) => {
-            const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-            const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-            if (aDue !== bDue) return aDue - bDue;
-            return (a.order || 0) - (b.order || 0);
-          })
-          .map((task, sortIndex, sorted) => {
+        {sortTasks(projectTasks).map((task, sortIndex, sorted) => {
             const due = formatDueDate(task.dueDate);
             const isExpanded = expandedTaskId === task._id;
             const isEditing = editingTaskId === task._id;
@@ -700,7 +679,13 @@ export default function ProjectDetail() {
                   key={task._id}
                   className="bg-white border border-emerald-300 rounded-lg overflow-hidden shadow-sm"
                 >
-                  <div className="p-4 space-y-3">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      saveEditTask(task);
+                    }}
+                    className="p-4 space-y-3"
+                  >
                     <input
                       type="text"
                       value={editTaskTitle}
@@ -735,8 +720,7 @@ export default function ProjectDetail() {
                     </div>
                     <div className="flex gap-2">
                       <button
-                        type="button"
-                        onClick={() => saveEditTask(task)}
+                        type="submit"
                         disabled={!editTaskTitle.trim()}
                         className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
                       >
@@ -750,7 +734,7 @@ export default function ProjectDetail() {
                         Cancel
                       </button>
                     </div>
-                  </div>
+                  </form>
                 </li>
               );
             }
@@ -764,7 +748,7 @@ export default function ProjectDetail() {
                   <button
                     type="button"
                     onClick={() => toggleTask(task)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
                       }`}
                   >
                     {task.completed && '✓'}
@@ -822,6 +806,11 @@ export default function ProjectDetail() {
                   >
                     Delete
                   </button>
+                  <TaskPositionInput
+                    position={sortIndex + 1}
+                    max={sorted.length}
+                    onCommit={(pos) => moveTaskToPosition(task, pos)}
+                  />
                 </div>
                 {isExpanded && task.notes && (
                   <div className="px-4 pb-3 pt-0 pl-12 text-sm text-slate-600 border-t border-slate-100">

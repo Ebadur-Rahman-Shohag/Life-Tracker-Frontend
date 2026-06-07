@@ -1,8 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { tasks as tasksApi, projects as projectsApi } from '../api/client';
 import ConfirmModal from '../components/ConfirmModal';
 import Loader from '../components/Loader';
+import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
+import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
+import { sortTasks } from '../lib/taskUtils';
+import TaskPositionInput from '../components/TaskPositionInput';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -101,7 +105,7 @@ export default function TaskManager() {
           let active = data.filter((p) => !p.archived);
           // If the API response doesn't include the just-created project yet, merge it in
           if (newProject && !newProject.parentId && !active.some((p) => p._id === newProject._id)) {
-            active = [{ ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }, ...active];
+            active = [...active, { ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }];
           }
           setProjects(active);
           setArchivedProjects(data.filter((p) => p.archived));
@@ -152,42 +156,24 @@ export default function TaskManager() {
     }
   }
 
-  async function toggleDailyTask(task) {
-    try {
-      const completed = !task.completed;
-      const payload = task.recurrenceRule ? { completed, date } : { completed };
-      const { data } = await tasksApi.update(task._id, payload);
-      setDailyTasks((prev) => prev.map((t) => (t._id === task._id ? data : t)));
-    } catch (err) {
-      console.error(err);
-    }
-  }
+  const buildTogglePayload = useCallback(
+    (task, completed) => (task.recurrenceRule ? { completed, date } : { completed }),
+    [date]
+  );
+  const toggleDailyTask = useOptimisticTaskToggle({
+    setTasks: setDailyTasks,
+    buildUpdatePayload: buildTogglePayload,
+  });
+  const { moveTask: moveDailyTask, moveTaskToPosition: moveDailyTaskToPosition } =
+    useOptimisticTaskReorder({
+      setTasks: setDailyTasks,
+      sortTasks,
+    });
 
   async function deleteDailyTask(task) {
     try {
       await tasksApi.delete(task._id);
       setDailyTasks((prev) => prev.filter((t) => t._id !== task._id));
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  async function moveDailyTask(task, direction) {
-    const idx = dailyTasks.findIndex((t) => t._id === task._id);
-    if (idx < 0) return;
-    const otherIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (otherIdx < 0 || otherIdx >= dailyTasks.length) return;
-    const other = dailyTasks[otherIdx];
-    try {
-      await Promise.all([
-        tasksApi.update(task._id, { order: other.order ?? otherIdx }),
-        tasksApi.update(other._id, { order: task.order ?? idx }),
-      ]);
-      setDailyTasks((prev) => {
-        const next = [...prev];
-        [next[idx], next[otherIdx]] = [next[otherIdx], next[idx]];
-        return next;
-      });
     } catch (err) {
       console.error(err);
     }
@@ -210,40 +196,48 @@ export default function TaskManager() {
   async function saveEditDailyTask(task) {
     const title = editTaskTitle.trim();
     if (!title) return;
-    try {
-      // Note: Changing recurrence type requires deleting and recreating the task
-      // because the backend has constraints (can't have both date and recurrenceRule)
-      const currentRecurrence = task.recurrenceRule || '';
-      const recurrenceChanged = currentRecurrence !== editTaskRecurrence;
 
-      if (recurrenceChanged) {
-        // Need to delete and recreate the task
+    const currentRecurrence = task.recurrenceRule || '';
+    const recurrenceChanged = currentRecurrence !== editTaskRecurrence;
+    const snapshot = dailyTasks;
+
+    if (recurrenceChanged) {
+      const optimisticTask = {
+        ...task,
+        title,
+        priority: editTaskPriority,
+        recurrenceRule: editTaskRecurrence || undefined,
+        date: editTaskRecurrence ? undefined : task.date,
+      };
+      setDailyTasks((prev) => prev.map((t) => (t._id === task._id ? optimisticTask : t)));
+      cancelEditDailyTask();
+
+      try {
         await tasksApi.delete(task._id);
-        const payload = {
-          title,
-          priority: editTaskPriority,
-        };
+        const payload = { title, priority: editTaskPriority };
         if (editTaskRecurrence) {
           payload.recurrenceRule = editTaskRecurrence;
         } else {
           payload.date = new Date(date).toISOString();
         }
         const { data } = await tasksApi.create(payload);
-        // Replace old task with new one
-        setDailyTasks((prev) => {
-          const filtered = prev.filter((t) => t._id !== task._id);
-          return [...filtered, data];
-        });
-      } else {
-        // Same type, just update
-        const { data } = await tasksApi.update(task._id, {
-          title,
-          priority: editTaskPriority,
-        });
-        setDailyTasks((prev) => prev.map((t) => (t._id === task._id ? data : t)));
+        setDailyTasks((prev) => [...prev.filter((t) => t._id !== task._id), data]);
+      } catch (err) {
+        setDailyTasks(snapshot);
+        console.error(err);
       }
-      cancelEditDailyTask();
+      return;
+    }
+
+    const optimisticTask = { ...task, title, priority: editTaskPriority };
+    setDailyTasks((prev) => prev.map((t) => (t._id === task._id ? optimisticTask : t)));
+    cancelEditDailyTask();
+
+    try {
+      const { data } = await tasksApi.update(task._id, { title, priority: editTaskPriority });
+      setDailyTasks((prev) => prev.map((t) => (t._id === task._id ? data : t)));
     } catch (err) {
+      setDailyTasks(snapshot);
       console.error(err);
     }
   }
@@ -301,6 +295,7 @@ export default function TaskManager() {
   const filteredTodayTasks = searchToday.trim()
     ? dailyTasks.filter((t) => t.title.toLowerCase().includes(searchToday.toLowerCase()))
     : dailyTasks;
+  const sortedDailyTasks = sortTasks(dailyTasks);
   const filteredProjects = searchProjects.trim()
     ? projects.filter(
       (p) =>
@@ -424,7 +419,13 @@ export default function TaskManager() {
                     key={task._id}
                     className="bg-white border border-emerald-300 rounded-lg px-4 py-3 shadow-sm"
                   >
-                    <div className="flex flex-wrap gap-2 items-center">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditDailyTask(task);
+                      }}
+                      className="flex flex-wrap gap-2 items-center"
+                    >
                       <input
                         type="text"
                         value={editTaskTitle}
@@ -453,8 +454,7 @@ export default function TaskManager() {
                         <option value="weekly">Weekly</option>
                       </select>
                       <button
-                        type="button"
-                        onClick={() => saveEditDailyTask(task)}
+                        type="submit"
                         disabled={!editTaskTitle.trim()}
                         className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
                       >
@@ -467,7 +467,7 @@ export default function TaskManager() {
                       >
                         Cancel
                       </button>
-                    </div>
+                    </form>
                   </li>
                 );
               }
@@ -480,7 +480,7 @@ export default function TaskManager() {
                   <button
                     type="button"
                     onClick={() => toggleDailyTask(task)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
                       }`}
                   >
                     {task.completed && '✓'}
@@ -528,6 +528,11 @@ export default function TaskManager() {
                   >
                     Delete
                   </button>
+                  <TaskPositionInput
+                    position={sortedDailyTasks.findIndex((t) => t._id === task._id) + 1}
+                    max={sortedDailyTasks.length}
+                    onCommit={(pos) => moveDailyTaskToPosition(task, pos)}
+                  />
                 </li>
               );
             })}

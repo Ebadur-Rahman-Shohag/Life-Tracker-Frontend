@@ -62,6 +62,7 @@ export const tasks = {
   create: (data) => client.post('/tasks', data),
   update: (id, data) => client.put(`/tasks/${id}`, data),
   delete: (id) => client.delete(`/tasks/${id}`),
+  reorder: (taskIds) => client.put('/tasks/reorder', { taskIds }),
 };
 
 export const habits = {
