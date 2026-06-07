@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BlockRenderer from './BlockRenderer';
-import { projects as projectsApi } from '../api/client';
+import { useProjects } from '../context/ProjectsContext';
 import ConfirmModal from './ConfirmModal';
 
 function formatTimestamp(iso) {
@@ -37,8 +37,8 @@ function textToTipTapJSON(text) {
 
 export default function NoteDetailView({ open, note, managedCategories = [], onClose, onEdit, onDelete, onToggleFavorite, onToggleArchive }) {
   const navigate = useNavigate();
+  const { allProjects, allProjectsLoaded, fetchAllProjects } = useProjects();
   const [connectedProjects, setConnectedProjects] = useState([]);
-  const [loadingProjects, setLoadingProjects] = useState(false);
   const [confirmModal, setConfirmModal] = useState(null);
 
   const categoryInfo = useMemo(() => {
@@ -47,48 +47,39 @@ export default function NoteDetailView({ open, note, managedCategories = [], onC
   }, [managedCategories, note?.category]);
 
   useEffect(() => {
-    async function loadProjects() {
-      if (!note?.projectIds || note.projectIds.length === 0) {
-        setConnectedProjects([]);
-        return;
-      }
-      setLoadingProjects(true);
-      try {
-        const { data } = await projectsApi.list({ includeArchived: true });
-        const idSet = new Set((note.projectIds || []).map((id) => String(id)));
-        const projects = (data || []).filter((p) => idSet.has(String(p._id)));
-        
-        // Build project paths with parent chain
-        const projectsWithPath = projects.map((project) => {
-          let path = project.name;
-          let current = project;
-          const visited = new Set([project._id]);
-          
-          // Build parent chain
-          while (current.parentId && !visited.has(current.parentId)) {
-            visited.add(current.parentId);
-            const parent = data.find((p) => p._id === current.parentId);
-            if (parent) {
-              path = `${parent.name} > ${path}`;
-              current = parent;
-            } else {
-              break;
-            }
-          }
-          return { ...project, path };
-        });
-        
-        setConnectedProjects(projectsWithPath);
-      } catch (err) {
-        console.error('Failed to load projects:', err);
-      } finally {
-        setLoadingProjects(false);
-      }
+    if (open && !allProjectsLoaded) {
+      fetchAllProjects();
     }
-    if (open && note) {
-      loadProjects();
+  }, [open, allProjectsLoaded, fetchAllProjects]);
+
+  useEffect(() => {
+    if (!open || !note?.projectIds || note.projectIds.length === 0) {
+      setConnectedProjects([]);
+      return;
     }
-  }, [open, note]);
+    const idSet = new Set((note.projectIds || []).map((id) => String(id)));
+    const projects = allProjects.filter((p) => idSet.has(String(p._id)));
+
+    const projectsWithPath = projects.map((project) => {
+      let path = project.name;
+      let current = project;
+      const visited = new Set([project._id]);
+
+      while (current.parentId && !visited.has(current.parentId)) {
+        visited.add(current.parentId);
+        const parent = allProjects.find((p) => p._id === current.parentId);
+        if (parent) {
+          path = `${parent.name} > ${path}`;
+          current = parent;
+        } else {
+          break;
+        }
+      }
+      return { ...project, path };
+    });
+
+    setConnectedProjects(projectsWithPath);
+  }, [open, note, allProjects]);
 
   if (!open || !note) return null;
 

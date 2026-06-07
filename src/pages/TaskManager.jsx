@@ -1,19 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
-import { tasks as tasksApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi } from '../api/client';
 import { useProjects } from '../context/ProjectsContext';
 import ConfirmModal from '../components/ConfirmModal';
 import Loader from '../components/Loader';
+import TaskManagerClock from '../components/TaskManagerClock';
 import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
-import { sortTasks } from '../lib/taskUtils';
+import { sortTasks, reorderListToPosition } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
-
-const CLOCK_12H_STORAGE_KEY = 'lifeTrackerTasksClock12h';
-const CLOCK_CHIME_ENABLED_KEY = 'lifeTrackerTasksClockChimeEnabled';
-const CLOCK_CHIME_MODE_KEY = 'lifeTrackerTasksClockChimeMode';
-const CLOCK_CHIME_MINUTE_KEY = 'lifeTrackerTasksClockChimeMinute';
-const CLOCK_CHIME_DAILY_KEY = 'lifeTrackerTasksClockChimeDaily';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -35,133 +30,6 @@ function formatDateDisplay(dateStr) {
   return `${day}/${month}/${year.slice(2)}`;
 }
 
-function readClockHour12() {
-  try {
-    const v = localStorage.getItem(CLOCK_12H_STORAGE_KEY);
-    if (v === 'false') return false;
-  } catch {
-    /* ignore */
-  }
-  return true;
-}
-
-function persistClockHour12(hour12) {
-  try {
-    localStorage.setItem(CLOCK_12H_STORAGE_KEY, hour12 ? 'true' : 'false');
-  } catch {
-    /* ignore */
-  }
-}
-
-function readChimeEnabled() {
-  try {
-    if (localStorage.getItem(CLOCK_CHIME_ENABLED_KEY) === 'false') return false;
-  } catch {
-    /* ignore */
-  }
-  return true;
-}
-
-function persistChimeEnabled(v) {
-  try {
-    localStorage.setItem(CLOCK_CHIME_ENABLED_KEY, v ? 'true' : 'false');
-  } catch {
-    /* ignore */
-  }
-}
-
-function readChimeMode() {
-  try {
-    const v = localStorage.getItem(CLOCK_CHIME_MODE_KEY);
-    if (v === 'daily') return 'daily';
-  } catch {
-    /* ignore */
-  }
-  return 'eachHour';
-}
-
-function persistChimeMode(mode) {
-  try {
-    localStorage.setItem(CLOCK_CHIME_MODE_KEY, mode);
-  } catch {
-    /* ignore */
-  }
-}
-
-function clampChimeMinute(n) {
-  const x = Math.floor(Number(n));
-  if (Number.isNaN(x)) return 0;
-  return Math.min(59, Math.max(0, x));
-}
-
-function readChimeMinute() {
-  try {
-    return clampChimeMinute(localStorage.getItem(CLOCK_CHIME_MINUTE_KEY) ?? '0');
-  } catch {
-    return 0;
-  }
-}
-
-function persistChimeMinute(n) {
-  try {
-    localStorage.setItem(CLOCK_CHIME_MINUTE_KEY, String(clampChimeMinute(n)));
-  } catch {
-    /* ignore */
-  }
-}
-
-function readChimeDailyTime() {
-  try {
-    const v = localStorage.getItem(CLOCK_CHIME_DAILY_KEY);
-    if (typeof v === 'string' && /^\d{1,2}:\d{2}$/.test(v)) {
-      const [h, m] = v.split(':').map(Number);
-      if (h >= 0 && h < 24 && m >= 0 && m < 60) {
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return '12:00';
-}
-
-function persistChimeDailyTime(hhmm) {
-  try {
-    if (typeof hhmm === 'string' && /^\d{1,2}:\d{2}$/.test(hhmm)) {
-      const [h, m] = hhmm.split(':').map(Number);
-      if (h >= 0 && h < 24 && m >= 0 && m < 60) {
-        const s = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-        localStorage.setItem(CLOCK_CHIME_DAILY_KEY, s);
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-function formatDigitalTime(d, hour12) {
-  return d.toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12,
-  });
-}
-
-/** Speak the current time (scheduled from clock settings on Task Manager). */
-function speakHourlyTime(d, hour12) {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return;
-  const timeStr = formatDigitalTime(d, hour12);
-  const u = new SpeechSynthesisUtterance(`The time is ${timeStr}.`);
-  if (typeof navigator !== 'undefined' && navigator.language) u.lang = navigator.language;
-  try {
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
-  } catch {
-    /* ignore */
-  }
-}
-
 export default function TaskManager() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -170,9 +38,9 @@ export default function TaskManager() {
   const [dailyTasks, setDailyTasks] = useState([]);
   const {
     projects,
+    setProjects,
     archivedProjects,
     projectsLoading,
-    setProjectsLoading,
     projectsLoaded,
     fetchProjects,
     addOptimisticProject,
@@ -180,7 +48,6 @@ export default function TaskManager() {
   } = useProjects();
   const [showArchived, setShowArchived] = useState(false);
   const [date, setDate] = useState(getLocalDateString());
-  const [loading, setLoading] = useState(true);
   const [dailyLoading, setDailyLoading] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
@@ -193,21 +60,8 @@ export default function TaskManager() {
   const [editTaskPriority, setEditTaskPriority] = useState('medium');
   const [editTaskRecurrence, setEditTaskRecurrence] = useState('');
   const [confirmModal, setConfirmModal] = useState(null);
-  const [now, setNow] = useState(() => new Date());
-  const [clockHour12, setClockHour12] = useState(readClockHour12);
-  const [chimeEnabled, setChimeEnabled] = useState(readChimeEnabled);
-  const [chimeMode, setChimeMode] = useState(readChimeMode);
-  const [chimeMinute, setChimeMinute] = useState(readChimeMinute);
-  const [chimeDailyTime, setChimeDailyTime] = useState(readChimeDailyTime);
-  const [clockSettingsOpen, setClockSettingsOpen] = useState(false);
   const addInputRef = useRef(null);
-  const clockMenuRef = useRef(null);
-  const lastChimeKeyRef = useRef(null);
 
-  // Synchronously reset today-tab state when switching tabs, before any paint.
-  // useEffect runs *after* paint, which causes a one-frame stale-data flash.
-  // Calling setState during render makes React discard the render and immediately
-  // re-render with the correct state before committing to the DOM.
   const [prevTab, setPrevTab] = useState(tab);
   if (prevTab !== tab) {
     setPrevTab(tab);
@@ -215,9 +69,13 @@ export default function TaskManager() {
       setDailyTasks([]);
       setDailyLoading(true);
     }
-    if (tab === 'projects') {
-      setProjectsLoading(true);
-    }
+  }
+
+  const [prevDate, setPrevDate] = useState(date);
+  if (prevDate !== date) {
+    setPrevDate(date);
+    setDailyTasks([]);
+    setDailyLoading(true);
   }
 
   useEffect(() => {
@@ -236,57 +94,6 @@ export default function TaskManager() {
     if (tab === 'today') fetchDaily();
     return () => { cancelled = true; };
   }, [tab, date]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      const next = new Date();
-      if (chimeEnabled) {
-        const s = next.getSeconds();
-        if (s === 0) {
-          if (chimeMode === 'eachHour') {
-            if (next.getMinutes() === chimeMinute) {
-              const key = `h-${next.getFullYear()}-${next.getMonth()}-${next.getDate()}-${next.getHours()}`;
-              if (lastChimeKeyRef.current !== key) {
-                lastChimeKeyRef.current = key;
-                speakHourlyTime(next, clockHour12);
-              }
-            }
-          } else {
-            const parts = chimeDailyTime.split(':');
-            const dh = parseInt(parts[0], 10);
-            const dm = parseInt(parts[1], 10);
-            if (!Number.isNaN(dh) && !Number.isNaN(dm) && next.getHours() === dh && next.getMinutes() === dm) {
-              const key = `d-${next.getFullYear()}-${next.getMonth()}-${next.getDate()}`;
-              if (lastChimeKeyRef.current !== key) {
-                lastChimeKeyRef.current = key;
-                speakHourlyTime(next, clockHour12);
-              }
-            }
-          }
-        }
-      }
-      setNow(next);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [clockHour12, chimeEnabled, chimeMode, chimeMinute, chimeDailyTime]);
-
-  useEffect(() => {
-    if (!clockSettingsOpen) return;
-    function onPointerDown(e) {
-      if (clockMenuRef.current && !clockMenuRef.current.contains(e.target)) {
-        setClockSettingsOpen(false);
-      }
-    }
-    function onKeyDown(e) {
-      if (e.key === 'Escape') setClockSettingsOpen(false);
-    }
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [clockSettingsOpen]);
 
   useEffect(() => {
     if (tab !== 'today') return;
@@ -312,75 +119,64 @@ export default function TaskManager() {
 
   useEffect(() => {
     if (tab !== 'projects') return;
-    let cancelled = false;
 
     if (newProject && !newProject.parentId) {
       addOptimisticProject(newProject);
+      navigate(location.pathname + location.search, { replace: true, state: {} });
     }
 
     if (!projectsLoaded && !projectsLoading) {
       fetchProjects();
     }
-
-    if (newProject) {
-      navigate(location.pathname + location.search, { replace: true, state: {} });
-    }
-
-    async function fetchProjects() {
-      setProjectsLoading(true);
-      try {
-        // Only fetch top-level projects (parentId: null)
-        const { data } = await projectsApi.list({ includeArchived: true, parentId: 'null' });
-        if (!cancelled) {
-          let active = data.filter((p) => !p.archived);
-          // If the API response doesn't include the just-created project yet, merge it in
-          if (newProject && !newProject.parentId && !active.some((p) => p._id === newProject._id)) {
-            active = [...active, { ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }];
-          }
-          setProjects(active);
-          setArchivedProjects(data.filter((p) => p.archived));
-        }
-      } catch {
-        if (!cancelled) {
-          // On error, at least show the new project if we have one
-          if (newProject && !newProject.parentId) {
-            setProjects([{ ...newProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }]);
-          } else {
-            setProjects([]);
-          }
-          setArchivedProjects([]);
-        }
-      } finally {
-        if (!cancelled) setProjectsLoading(false);
-      }
-    }
-    fetchProjects();
-    return () => { cancelled = true; };
-  }, [tab, newProjectId, projectsLoaded, projectsLoading, fetchProjects, addOptimisticProject, navigate, location.pathname, location.search]);
-
-  useEffect(() => {
-    setLoading(false);
-  }, []);
+  }, [
+    tab,
+    newProjectId,
+    newProject,
+    projectsLoaded,
+    projectsLoading,
+    fetchProjects,
+    addOptimisticProject,
+    navigate,
+    location.pathname,
+    location.search,
+  ]);
 
   async function handleAddDailyTask(e) {
     e.preventDefault();
     const title = newTaskTitle.trim();
     if (!title) return;
     setAddingTask(true);
-    // Clear input fields immediately for better UX
     setNewTaskTitle('');
+    const savedRecurrence = newTaskRecurrence;
+    const savedPriority = newTaskPriority;
     setNewTaskRecurrence('');
+
+    const tempId = `temp-${Date.now()}`;
+    const optimisticTask = {
+      _id: tempId,
+      title,
+      priority: savedPriority,
+      completed: false,
+      recurrenceRule: savedRecurrence || undefined,
+      date: savedRecurrence ? undefined : new Date(date).toISOString(),
+      order: dailyTasks.length,
+    };
+    setDailyTasks((prev) => [...prev, optimisticTask]);
+
     try {
-      const payload = { title, priority: newTaskPriority };
-      if (newTaskRecurrence) {
-        payload.recurrenceRule = newTaskRecurrence;
+      const payload = { title, priority: savedPriority };
+      if (savedRecurrence) {
+        payload.recurrenceRule = savedRecurrence;
       } else {
         payload.date = new Date(date).toISOString();
       }
       const { data } = await tasksApi.create(payload);
-      setDailyTasks((prev) => [...prev, data]);
+      setDailyTasks((prev) => prev.map((t) => (t._id === tempId ? data : t)));
       addInputRef.current?.focus();
     } catch (err) {
+      setDailyTasks((prev) => prev.filter((t) => t._id !== tempId));
+      setNewTaskTitle(title);
+      setNewTaskRecurrence(savedRecurrence);
       console.error(err);
     } finally {
       setAddingTask(false);
@@ -402,10 +198,12 @@ export default function TaskManager() {
     });
 
   async function deleteDailyTask(task) {
+    const snapshot = dailyTasks;
+    setDailyTasks((prev) => prev.filter((t) => t._id !== task._id));
     try {
       await tasksApi.delete(task._id);
-      setDailyTasks((prev) => prev.filter((t) => t._id !== task._id));
     } catch (err) {
+      setDailyTasks(snapshot);
       console.error(err);
     }
   }
@@ -444,15 +242,21 @@ export default function TaskManager() {
       cancelEditDailyTask();
 
       try {
-        await tasksApi.delete(task._id);
         const payload = { title, priority: editTaskPriority };
         if (editTaskRecurrence) {
           payload.recurrenceRule = editTaskRecurrence;
         } else {
           payload.date = new Date(date).toISOString();
         }
-        const { data } = await tasksApi.create(payload);
-        setDailyTasks((prev) => [...prev.filter((t) => t._id !== task._id), data]);
+        const { data: newTask } = await tasksApi.create(payload);
+        try {
+          await tasksApi.delete(task._id);
+          setDailyTasks((prev) => [...prev.filter((t) => t._id !== task._id), newTask]);
+        } catch (deleteErr) {
+          await tasksApi.delete(newTask._id).catch(() => {});
+          setDailyTasks(snapshot);
+          console.error(deleteErr);
+        }
       } catch (err) {
         setDailyTasks(snapshot);
         console.error(err);
@@ -503,32 +307,48 @@ export default function TaskManager() {
     });
   }
 
-  async function moveProject(index, direction) {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= projects.length) return;
-
-    const newProjects = [...projects];
-    [newProjects[index], newProjects[targetIndex]] = [newProjects[targetIndex], newProjects[index]];
-
+  async function persistProjectReorder(reordered) {
+    const snapshot = projects;
+    setProjects(reordered);
     try {
-      await projectsApi.reorder(newProjects.map((p) => p._id));
-      setProjects(newProjects);
+      await projectsApi.reorder(reordered.map((p) => p._id));
     } catch (err) {
+      setProjects(snapshot);
       console.error(err);
     }
   }
 
-  const filteredTodayTasks = searchToday.trim()
-    ? dailyTasks.filter((t) => t.title.toLowerCase().includes(searchToday.toLowerCase()))
-    : dailyTasks;
-  const sortedDailyTasks = sortTasks(dailyTasks);
-  const filteredProjects = searchProjects.trim()
-    ? projects.filter(
+  function moveProject(projectId, direction) {
+    const index = projects.findIndex((p) => p._id === projectId);
+    if (index < 0) return;
+    const reordered = reorderListToPosition(projects, projectId, index + 1 + direction);
+    if (reordered) void persistProjectReorder(reordered);
+  }
+
+  function moveProjectToPosition(projectId, position) {
+    const reordered = reorderListToPosition(projects, projectId, position);
+    if (reordered) void persistProjectReorder(reordered);
+  }
+
+  const sortedDailyTasks = useMemo(() => sortTasks(dailyTasks), [dailyTasks]);
+  const filteredTodayTasks = useMemo(() => {
+    const q = searchToday.trim().toLowerCase();
+    if (!q) return sortedDailyTasks;
+    return sortedDailyTasks.filter((t) => t.title.toLowerCase().includes(q));
+  }, [sortedDailyTasks, searchToday]);
+  const dailyTaskIndexById = useMemo(
+    () => new Map(sortedDailyTasks.map((t, i) => [t._id, i])),
+    [sortedDailyTasks]
+  );
+  const filteredProjects = useMemo(() => {
+    const q = searchProjects.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter(
       (p) =>
-        p.name.toLowerCase().includes(searchProjects.toLowerCase()) ||
-        (p.description || '').toLowerCase().includes(searchProjects.toLowerCase())
-    )
-    : projects;
+        p.name.toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q)
+    );
+  }, [projects, searchProjects]);
 
   const completedCount = dailyTasks.filter((t) => t.completed).length;
   const totalCount = dailyTasks.length;
@@ -538,162 +358,7 @@ export default function TaskManager() {
     <div className="max-w-7xl mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-2xl font-bold text-slate-800">Task Manager</h1>
-        <div className="relative" ref={clockMenuRef}>
-          <div className="flex items-stretch rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <time
-              dateTime={now.toISOString()}
-              className="inline-flex items-center text-lg sm:text-xl font-mono font-semibold tabular-nums tracking-wide text-slate-800 pl-3 pr-2 sm:pl-4 sm:pr-3 py-2"
-            >
-              {formatDigitalTime(now, clockHour12)}
-            </time>
-            <button
-              type="button"
-              onClick={() => setClockSettingsOpen((o) => !o)}
-              className="flex items-center justify-center border-l border-slate-200 px-2.5 text-slate-500 hover:text-emerald-600 hover:bg-slate-50 transition-colors"
-              aria-label="Clock and voice settings"
-              aria-expanded={clockSettingsOpen}
-              aria-haspopup="true"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="w-5 h-5"
-                aria-hidden
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.65.87.3.17.64.25.99.18l1.3-.3c.54-.12 1.01.2 1.19.7l.9 1.8c.18.5.05 1.07-.4 1.4l-1.02.7c-.28.2-.45.5-.45.8v.9c0 .3.17.6.45.8l1.02.7c.45.3.58.9.4 1.4l-.9 1.8c-.18.5-.64.82-1.19.7l-1.3-.3a1.2 1.2 0 01-1.02.18c-.32-.1-.6-.3-.7-.6l-.3-1.2c-.1-.3-.3-.5-.5-.6-.3-.1-.6-.1-.9 0l-1.2.3c-.3.1-.6 0-.8-.2l-1-1.7c-.2-.2-.2-.5-.1-.8l.5-1.1c.1-.3 0-.6-.1-.8l-1-1.7c-.2-.2-.1-.5.1-.7l.9-1.5c.2-.2.4-.3.7-.2l1.2.2c.3.1.6 0 .9-.1.3-.2.4-.4.4-.7l.1-1.3z"
-                />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-          </div>
-          {clockSettingsOpen && (
-            <div
-              className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
-              role="menu"
-            >
-              <p className="px-3 pt-2 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">Display</p>
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={clockHour12}
-                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${clockHour12 ? 'bg-emerald-50 text-emerald-800 font-medium' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                onClick={() => {
-                  setClockHour12(true);
-                  persistClockHour12(true);
-                }}
-              >
-                12 hour
-                {clockHour12 && <span className="text-emerald-600">✓</span>}
-              </button>
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={!clockHour12}
-                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${!clockHour12 ? 'bg-emerald-50 text-emerald-800 font-medium' : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                onClick={() => {
-                  setClockHour12(false);
-                  persistClockHour12(false);
-                }}
-              >
-                24 hour
-                {!clockHour12 && <span className="text-emerald-600">✓</span>}
-              </button>
-
-              <div className="my-1 border-t border-slate-100" />
-              <p className="px-3 pt-1 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">Voice call</p>
-              <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  checked={chimeEnabled}
-                  onChange={(e) => {
-                    const v = e.target.checked;
-                    setChimeEnabled(v);
-                    persistChimeEnabled(v);
-                  }}
-                />
-                Enable spoken time
-              </label>
-              <div className="px-3 py-1.5 text-xs text-slate-500">When to announce</div>
-              <div className="flex gap-1 px-2 pb-1">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-md px-2 py-1.5 text-center text-xs font-medium ${chimeMode === 'eachHour'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  onClick={() => {
-                    setChimeMode('eachHour');
-                    persistChimeMode('eachHour');
-                  }}
-                >
-                  Every hour
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-md px-2 py-1.5 text-center text-xs font-medium ${chimeMode === 'daily'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  onClick={() => {
-                    setChimeMode('daily');
-                    persistChimeMode('daily');
-                  }}
-                >
-                  Once a day
-                </button>
-              </div>
-              {chimeMode === 'eachHour' ? (
-                <div className="px-3 pb-3">
-                  <label className="mb-1 block text-xs text-slate-600" htmlFor="chime-minute">
-                    At minute past each hour (0–59)
-                  </label>
-                  <input
-                    id="chime-minute"
-                    type="number"
-                    min={0}
-                    max={59}
-                    value={chimeMinute}
-                    onChange={(e) => {
-                      const v = clampChimeMinute(e.target.value);
-                      setChimeMinute(v);
-                      persistChimeMinute(v);
-                    }}
-                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
-                  />
-                </div>
-              ) : (
-                <div className="px-3 pb-3">
-                  <label className="mb-1 block text-xs text-slate-600" htmlFor="chime-daily">
-                    Local time
-                  </label>
-                  <input
-                    id="chime-daily"
-                    type="time"
-                    step={60}
-                    value={chimeDailyTime}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v) {
-                        setChimeDailyTime(v);
-                        persistChimeDailyTime(v);
-                      }
-                    }}
-                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
-                  />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <TaskManagerClock />
       </div>
 
       <div className="flex gap-2 mb-6">
@@ -798,9 +463,13 @@ export default function TaskManager() {
               ) : 'Add'}
             </button>
           </form>
+          {dailyLoading && dailyTasks.length === 0 ? (
+            <Loader message="Loading tasks..." />
+          ) : (
           <ul className="space-y-2">
             {filteredTodayTasks.map((task) => {
               const isEditing = editingTaskId === task._id;
+              const taskIndex = dailyTaskIndexById.get(task._id) ?? -1;
 
               if (isEditing) {
                 return (
@@ -887,7 +556,7 @@ export default function TaskManager() {
                     <button
                       type="button"
                       onClick={() => moveDailyTask(task, 'up')}
-                      disabled={filteredTodayTasks.indexOf(task) === 0}
+                      disabled={taskIndex <= 0}
                       className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
                       title="Move up"
                     >
@@ -896,7 +565,7 @@ export default function TaskManager() {
                     <button
                       type="button"
                       onClick={() => moveDailyTask(task, 'down')}
-                      disabled={filteredTodayTasks.indexOf(task) === filteredTodayTasks.length - 1}
+                      disabled={taskIndex < 0 || taskIndex >= sortedDailyTasks.length - 1}
                       className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
                       title="Move down"
                     >
@@ -918,7 +587,7 @@ export default function TaskManager() {
                     Delete
                   </button>
                   <TaskPositionInput
-                    position={sortedDailyTasks.findIndex((t) => t._id === task._id) + 1}
+                    position={taskIndex + 1}
                     max={sortedDailyTasks.length}
                     onCommit={(pos) => moveDailyTaskToPosition(task, pos)}
                   />
@@ -926,7 +595,10 @@ export default function TaskManager() {
               );
             })}
           </ul>
-          {dailyLoading && <Loader message="Loading tasks..." />}
+          )}
+          {dailyLoading && dailyTasks.length > 0 && (
+            <p className="text-sm text-slate-500 mt-2">Refreshing tasks…</p>
+          )}
           {!dailyLoading && dailyTasks.length === 0 && (
             <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
               <p className="text-slate-600 mb-2">No tasks for this day.</p>
@@ -967,11 +639,12 @@ export default function TaskManager() {
             <Loader message="Loading projects..." />
           )}
           <div className="grid gap-3">
-            {filteredProjects.map((project, index) => {
+            {filteredProjects.map((project) => {
               const total = project.totalTasks ?? 0;
               const completed = project.completedTasks ?? 0;
               const percent = total ? Math.round((completed / total) * 100) : 0;
               const subCount = project.subProjectCount ?? 0;
+              const projectIndex = projects.findIndex((p) => p._id === project._id);
               return (
                 <div
                   key={project._id}
@@ -995,9 +668,9 @@ export default function TaskManager() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            moveProject(index, -1);
+                            moveProject(project._id, -1);
                           }}
-                          disabled={index === 0}
+                          disabled={projectIndex <= 0}
                           className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
                           title="Move up"
                         >
@@ -1007,9 +680,9 @@ export default function TaskManager() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            moveProject(index, 1);
+                            moveProject(project._id, 1);
                           }}
-                          disabled={index === filteredProjects.length - 1}
+                          disabled={projectIndex < 0 || projectIndex >= projects.length - 1}
                           className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
                           title="Move down"
                         >
@@ -1024,6 +697,13 @@ export default function TaskManager() {
                       >
                         Delete
                       </button>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <TaskPositionInput
+                          position={projectIndex + 1}
+                          max={projects.length}
+                          onCommit={(pos) => moveProjectToPosition(project._id, pos)}
+                        />
+                      </span>
                     </div>
                   </div>
                   {project.description && (

@@ -1,16 +1,26 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function TaskPositionInput({ position, max, onCommit, disabled = false }) {
   const [value, setValue] = useState(String(position));
+  const [pending, setPending] = useState(false);
+  const focusedRef = useRef(false);
 
   useEffect(() => {
-    setValue(String(position));
+    if (!focusedRef.current) {
+      setValue(String(position));
+    }
   }, [position]);
 
-  function commit() {
+  async function commit() {
+    if (pending || disabled) return;
     const parsed = parseInt(value, 10);
     if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= max && parsed !== position) {
-      onCommit(parsed);
+      setPending(true);
+      try {
+        await Promise.resolve(onCommit(parsed));
+      } finally {
+        setPending(false);
+      }
     } else {
       setValue(String(position));
     }
@@ -22,9 +32,15 @@ export default function TaskPositionInput({ position, max, onCommit, disabled = 
       min={1}
       max={max}
       value={value}
-      disabled={disabled}
+      disabled={disabled || pending}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
+      onBlur={() => {
+        focusedRef.current = false;
+        void commit();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();

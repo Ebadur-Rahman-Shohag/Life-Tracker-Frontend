@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useCallback } from 'react';
 import { projects as projectsApi } from '../api/client';
 
 const ProjectsContext = createContext(null);
+const LIST_PARAMS = { includeArchived: true, parentId: 'null' };
+const ALL_PROJECTS_PARAMS = { includeArchived: true };
 
 export function ProjectsProvider({ children }) {
     const [projects, setProjects] = useState([]);
@@ -9,12 +11,17 @@ export function ProjectsProvider({ children }) {
     const [projectsLoading, setProjectsLoading] = useState(false);
     const [projectsLoaded, setProjectsLoaded] = useState(false);
 
+    const [allProjects, setAllProjects] = useState([]);
+    const [allProjectsLoading, setAllProjectsLoading] = useState(false);
+    const [allProjectsLoaded, setAllProjectsLoaded] = useState(false);
 
-    const fetchProjects = useCallback(async () => {
+    const fetchProjects = useCallback(async (force = false) => {
         setProjectsLoading(true);
         try {
-            const { data } = await projectsApi.list({ includeArchived: true, parentId: 'null' });
-            const active = data.filter((p) => !p.archived).reverse(); // oldest to newest
+            const data = force
+                ? (await projectsApi.list(LIST_PARAMS)).data
+                : await projectsApi.listCached(LIST_PARAMS);
+            const active = data.filter((p) => !p.archived).reverse();
             setProjects(active);
             setArchivedProjects(data.filter((p) => p.archived).reverse());
             setProjectsLoaded(true);
@@ -25,6 +32,20 @@ export function ProjectsProvider({ children }) {
         }
     }, []);
 
+    const fetchAllProjects = useCallback(async (force = false) => {
+        setAllProjectsLoading(true);
+        try {
+            const data = force
+                ? (await projectsApi.list(ALL_PROJECTS_PARAMS)).data
+                : await projectsApi.listCached(ALL_PROJECTS_PARAMS);
+            setAllProjects(Array.isArray(data) ? data : []);
+            setAllProjectsLoaded(true);
+        } catch (err) {
+            console.error('Failed to load all projects:', err);
+        } finally {
+            setAllProjectsLoading(false);
+        }
+    }, []);
 
     const addOptimisticProject = useCallback((newProject) => {
         if (!newProject || newProject.parentId) return;
@@ -35,7 +56,6 @@ export function ProjectsProvider({ children }) {
         );
     }, []);
 
-    // Delete project and update state
     const deleteProject = useCallback(async (projectId, isArchived = false) => {
         await projectsApi.delete(projectId);
         if (isArchived) {
@@ -43,7 +63,8 @@ export function ProjectsProvider({ children }) {
         } else {
             setProjects((prev) => prev.filter((p) => p._id !== projectId));
         }
-    }, [setProjects, setArchivedProjects]);
+        setAllProjects((prev) => prev.filter((p) => p._id !== projectId));
+    }, []);
 
     return (
         <ProjectsContext.Provider
@@ -56,6 +77,10 @@ export function ProjectsProvider({ children }) {
                 setProjectsLoading,
                 projectsLoaded,
                 fetchProjects,
+                allProjects,
+                allProjectsLoading,
+                allProjectsLoaded,
+                fetchAllProjects,
                 addOptimisticProject,
                 deleteProject,
             }}

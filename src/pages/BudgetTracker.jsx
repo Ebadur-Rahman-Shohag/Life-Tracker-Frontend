@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { budget as budgetApi } from '../api/client';
 import { toISODateString, getTodayDate } from '../lib/dateUtils';
 import Loader from '../components/Loader';
@@ -10,30 +10,6 @@ import ConfirmModal from '../components/ConfirmModal';
 
 // Lazy load chart component
 const BudgetChart = lazy(() => import('../components/BudgetChart'));
-
-const DEFAULT_EXPENSE_CATEGORIES = [
-  { name: 'Groceries', icon: '🛒', color: '#10b981' },
-  { name: 'Rent', icon: '🏠', color: '#3b82f6' },
-  { name: 'Restaurant', icon: '🍽️', color: '#f59e0b' },
-  { name: 'Transport', icon: '🚗', color: '#8b5cf6' },
-  { name: 'Shopping', icon: '🛍️', color: '#ec4899' },
-  { name: 'Utilities', icon: '💡', color: '#f97316' },
-  { name: 'Subscriptions', icon: '🔄', color: '#06b6d4' },
-  { name: 'Activities', icon: '🎯', color: '#84cc16' },
-  { name: 'Healthcare', icon: '🏥', color: '#ef4444' },
-  { name: 'Education', icon: '📚', color: '#6366f1' },
-  { name: 'Personal Care', icon: '💅', color: '#ec4899' },
-  { name: 'Other', icon: '📦', color: '#6b7280' },
-];
-
-const DEFAULT_INCOME_CATEGORIES = [
-  { name: 'Salary', icon: '💰', color: '#10b981' },
-  { name: 'Freelance', icon: '💼', color: '#3b82f6' },
-  { name: 'Investment', icon: '📈', color: '#f59e0b' },
-  { name: 'Refund', icon: '↩️', color: '#8b5cf6' },
-  { name: 'Gift', icon: '🎁', color: '#ec4899' },
-  { name: 'Other', icon: '📦', color: '#6b7280' },
-];
 
 export default function BudgetTracker() {
   const [loading, setLoading] = useState(true);
@@ -55,9 +31,12 @@ export default function BudgetTracker() {
   const [filterType, setFilterType] = useState('');
   const [sortBy, setSortBy] = useState('date');
   const [showTransactions, setShowTransactions] = useState(false);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [chartType, setChartType] = useState('pie');
   const [error, setError] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
+  const readyRef = useRef(false);
+  const [chartReady, setChartReady] = useState(false);
 
   // Get date range based on period
   const getDateRange = useCallback(() => {
@@ -90,43 +69,11 @@ export default function BudgetTracker() {
     return { startDate, endDate };
   }, [period]);
 
-  // Load categories
+  // Load categories (server seeds defaults when none exist)
   const loadCategories = useCallback(async () => {
     try {
       const response = await budgetApi.getCategories({ activeOnly: 'true' });
-      let cats = response.data;
-
-      // Initialize default categories if none exist
-      if (cats.length === 0) {
-        const defaultCats = [
-          ...DEFAULT_EXPENSE_CATEGORIES.map(cat => ({ ...cat, type: 'expense' })),
-          ...DEFAULT_INCOME_CATEGORIES.map(cat => ({ ...cat, type: 'income' })),
-        ];
-
-        // Create categories one by one, checking for duplicates
-        for (const cat of defaultCats) {
-          try {
-            // Check if category already exists before creating
-            const existing = cats.find(
-              c => c.name.toLowerCase() === cat.name.toLowerCase() && c.type === cat.type
-            );
-            if (!existing) {
-              await budgetApi.createCategory(cat);
-            }
-          } catch (err) {
-            // Ignore duplicate errors (category might have been created by another request)
-            if (err.response?.status !== 400) {
-              console.error('Error creating default category:', err);
-            }
-          }
-        }
-
-        // Reload categories after creating defaults
-        const reloadResponse = await budgetApi.getCategories({ activeOnly: 'true' });
-        cats = reloadResponse.data;
-      }
-
-      setCategories(cats);
+      setCategories(response.data);
     } catch (err) {
       console.error('Error loading categories:', err);
     }
@@ -147,8 +94,19 @@ export default function BudgetTracker() {
     }
   }, [period, getDateRange]);
 
-  // Load transactions
+  // Load recent transactions for quick-add (non-blocking)
+  const loadRecentTransactions = useCallback(async () => {
+    try {
+      const response = await budgetApi.getTransactions({ limit: 10 });
+      setTransactions(response.data);
+    } catch (err) {
+      console.error('Error loading recent transactions:', err);
+    }
+  }, []);
+
+  // Load full transaction list for the selected period
   const loadTransactions = useCallback(async () => {
+    setTransactionsLoading(true);
     try {
       const { startDate, endDate } = getDateRange();
       const response = await budgetApi.getTransactions({
@@ -159,30 +117,56 @@ export default function BudgetTracker() {
       setTransactions(response.data);
     } catch (err) {
       console.error('Error loading transactions:', err);
+    } finally {
+      setTransactionsLoading(false);
     }
   }, [getDateRange]);
 
-  // Initial load
-  useEffect(() => {
-    const loadAll = async () => {
-      setLoading(true);
-      await loadCategories();
-      await loadSummary();
+  const refreshTransactionData = useCallback(async () => {
+    if (showTransactions) {
       await loadTransactions();
-      setLoading(false);
-    };
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run on mount
-
-  // Reload when period changes (without showing loader)
-  useEffect(() => {
-    if (!loading) {
-      // Only reload if initial load is complete
-      loadSummary();
-      loadTransactions();
+    } else {
+      await loadRecentTransactions();
     }
-  }, [period, loadSummary, loadTransactions, loading]);
+  }, [showTransactions, loadTransactions, loadRecentTransactions]);
+
+  useEffect(() => {
+    if (loading) {
+      setChartReady(false);
+      return undefined;
+    }
+    if (typeof requestIdleCallback === 'function') {
+      const id = requestIdleCallback(() => setChartReady(true));
+      return () => cancelIdleCallback(id);
+    }
+    const t = setTimeout(() => setChartReady(true), 0);
+    return () => clearTimeout(t);
+  }, [loading]);
+
+  // Initial load: categories + summary in parallel (don't block on transactions)
+  useEffect(() => {
+    const loadInitial = async () => {
+      setLoading(true);
+      await Promise.all([loadCategories(), loadSummary()]);
+      setLoading(false);
+      readyRef.current = true;
+      loadRecentTransactions();
+    };
+    loadInitial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reload summary when period changes
+  useEffect(() => {
+    if (!readyRef.current) return;
+    loadSummary();
+  }, [period, loadSummary]);
+
+  // Load full transactions only when the list is expanded
+  useEffect(() => {
+    if (!readyRef.current || !showTransactions) return;
+    loadTransactions();
+  }, [period, showTransactions, loadTransactions]);
 
   const handleTransactionSubmit = async (data) => {
     try {
@@ -193,8 +177,7 @@ export default function BudgetTracker() {
       }
       setShowTransactionForm(false);
       setEditingTransaction(null);
-      await loadSummary();
-      await loadTransactions();
+      await Promise.all([loadSummary(), refreshTransactionData()]);
     } catch (err) {
       console.error('Error saving transaction:', err);
       setError('Error saving transaction. Please try again.');
@@ -213,8 +196,7 @@ export default function BudgetTracker() {
       onConfirm: async () => {
         try {
           await budgetApi.deleteTransaction(id);
-          await loadSummary();
-          await loadTransactions();
+          await Promise.all([loadSummary(), refreshTransactionData()]);
           setConfirmModal(null);
         } catch (err) {
           console.error('Error deleting transaction:', err);
@@ -340,15 +322,15 @@ export default function BudgetTracker() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
 
-  // Get recent categories for quick entry
-  const getRecentCategories = useCallback((type) => {
+  const recentExpenseCategories = useMemo(() => {
     const recentTransactions = transactions
-      .filter(t => t.type === type)
+      .filter((t) => t.type === 'expense')
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 3);
-
-    const categoryIds = [...new Set(recentTransactions.map(t => t.categoryId?._id || t.categoryId))];
-    return categories.filter(c => categoryIds.includes(c._id));
+    const categoryIds = new Set(
+      recentTransactions.map((t) => String(t.categoryId?._id || t.categoryId))
+    );
+    return categories.filter((c) => categoryIds.has(String(c._id)));
   }, [transactions, categories]);
 
   return (
@@ -471,10 +453,10 @@ export default function BudgetTracker() {
           >
             + Income
           </button>
-          {getRecentCategories('expense').length > 0 && (
+          {recentExpenseCategories.length > 0 && (
             <>
               <span className="text-xs text-slate-400 self-center">Recent:</span>
-              {getRecentCategories('expense').slice(0, 3).map(cat => (
+              {recentExpenseCategories.map(cat => (
                 <button
                   key={cat._id}
                   onClick={() => {
@@ -793,9 +775,13 @@ export default function BudgetTracker() {
               </button>
             </div>
           </div>
-          <Suspense fallback={<div className="h-[300px] bg-slate-50 animate-pulse rounded flex items-center justify-center"><span className="text-slate-400">Loading chart...</span></div>}>
-            <BudgetChart summary={summary} type={chartType} />
-          </Suspense>
+          {chartReady ? (
+            <Suspense fallback={<div className="h-[300px] bg-slate-50 animate-pulse rounded flex items-center justify-center"><span className="text-slate-400">Loading chart...</span></div>}>
+              <BudgetChart summary={summary} type={chartType} />
+            </Suspense>
+          ) : (
+            <div className="h-[300px] bg-slate-50 animate-pulse rounded" />
+          )}
         </div>
       )}
 
@@ -823,8 +809,13 @@ export default function BudgetTracker() {
 
         {showTransactions && (
           <div className="space-y-4">
+            {transactionsLoading && (
+              <div className="flex items-center justify-center py-4">
+                <Loader message="Loading transactions..." />
+              </div>
+            )}
             {/* Search and Filter Controls */}
-            {transactions.length > 0 && (
+            {!transactionsLoading && transactions.length > 0 && (
               <div className="bg-white p-4 rounded-lg border border-slate-200">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
@@ -879,16 +870,18 @@ export default function BudgetTracker() {
               </div>
             )}
 
-            <TransactionList
-              transactions={transactions}
-              categories={categories}
-              onEdit={handleEditTransaction}
-              onDelete={handleDeleteTransaction}
-              searchQuery={searchQuery}
-              filterCategory={filterCategory}
-              filterType={filterType}
-              sortBy={sortBy}
-            />
+            {!transactionsLoading && (
+              <TransactionList
+                transactions={transactions}
+                categories={categories}
+                onEdit={handleEditTransaction}
+                onDelete={handleDeleteTransaction}
+                searchQuery={searchQuery}
+                filterCategory={filterCategory}
+                filterType={filterType}
+                sortBy={sortBy}
+              />
+            )}
           </div>
         )}
       </div>

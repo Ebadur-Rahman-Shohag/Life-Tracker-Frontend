@@ -1,4 +1,32 @@
+import { useEffect, useRef } from 'react';
+
 export default function ConfirmModal({ open, title, message, confirmText = 'Confirm', cancelText = 'Cancel', onConfirm, onCancel, variant = 'danger' }) {
+  const onConfirmRef = useRef(onConfirm);
+  const onCancelRef = useRef(onCancel);
+
+  useEffect(() => {
+    onConfirmRef.current = onConfirm;
+    onCancelRef.current = onCancel;
+  }, [onConfirm, onCancel]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    function onKeyDown(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onConfirmRef.current?.();
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancelRef.current?.();
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
   if (!open) return null;
 
   const variantStyles = {

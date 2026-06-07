@@ -230,12 +230,36 @@ export function usePomodoroTimer() {
   }, [isRunning, secondsRemaining, phase]);
 
   useEffect(() => {
+    const syncFromWallClock = () => {
+      const timer = latestTimerRef.current;
+      if (!timer.isRunning) return;
+
+      const snap = loadTimerSnapshot();
+      if (!snap?.isRunning || typeof snap.endsAt !== 'number' || snap.endsAt <= 0) return;
+
+      const cap = getSecondsForPhase(timer.phase, stateRef.current.settings);
+      let rem = Math.max(0, Math.round((snap.endsAt - Date.now()) / 1000));
+      rem = Math.min(cap, rem);
+      setSecondsRemaining(rem);
+
+      if (rem === 0) {
+        const phaseAtEnd = timer.phase;
+        setTimeout(() => {
+          if (phaseAtEnd === Ph.FOCUS) {
+            afterFocusEnd(true);
+          } else if (phaseAtEnd === Ph.SHORT || phaseAtEnd === Ph.LONG) {
+            afterBreakEnd();
+          }
+        }, 0);
+      }
+    };
+
     const onVis = () => {
-      if (document.hidden) setIsRunning(false);
+      if (!document.hidden) syncFromWallClock();
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
+  }, [afterFocusEnd, afterBreakEnd]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -307,8 +331,10 @@ export function usePomodoroTimer() {
     setSettings(c);
     setSecondsRemaining((prev) => {
       const p = stateRef.current.phase;
+      const oldMax = getSecondsForPhase(p, stateRef.current.settings);
       const max = getSecondsForPhase(p, c);
-      return Math.min(max, Math.max(0, prev > max ? max : prev));
+      if (prev >= oldMax) return max;
+      return Math.min(max, Math.max(0, prev));
     });
   }, []);
 

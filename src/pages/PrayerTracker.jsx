@@ -99,6 +99,13 @@ export default function PrayerTracker() {
     onError,
   });
 
+  const renderPrayerColumnHeader = useCallback(
+    (category) => (
+      <span className="text-slate-600 font-medium">{category.label.split(' ')[0]}</span>
+    ),
+    []
+  );
+
   // ============ OPTIMISTIC TOGGLE HOOK ============
   const handleToggle = useOptimisticToggle({
     dailyStats,
@@ -451,9 +458,7 @@ export default function PrayerTracker() {
             emerald: PRAYER_PROGRESS_THRESHOLD_EMERALD,
             amber: PRAYER_PROGRESS_THRESHOLD_AMBER,
           }}
-          renderColumnHeader={(category) => (
-            <span className="text-slate-600 font-medium">{category.label.split(' ')[0]}</span>
-          )}
+          renderColumnHeader={renderPrayerColumnHeader}
           view={view}
           title={view === 'week' ? 'Weekly Progress' : 'Monthly Progress'}
         />

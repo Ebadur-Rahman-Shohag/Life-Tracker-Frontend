@@ -1,4 +1,12 @@
 import axios from 'axios';
+import { dedupedFetch, invalidateCache, cacheKey } from '../lib/apiCache.js';
+
+const PROJECTS_CACHE_TTL = 60_000;
+const PROJECT_DETAIL_CACHE_TTL = 30_000;
+
+export function invalidateProjectsCache() {
+  invalidateCache('projects:');
+}
 
 // Use environment variable for API URL, fallback to '/api' for local development
 const API_URL = import.meta.env.VITE_API_URL || '/api';
@@ -49,10 +57,29 @@ export const activities = {
 
 export const projects = {
   list: (params) => client.get('/projects', { params }),
+  listCached: (params) =>
+    dedupedFetch(cacheKey(['projects', 'list', JSON.stringify(params || {})]), PROJECTS_CACHE_TTL, async () => {
+      const { data } = await client.get('/projects', { params });
+      return data;
+    }),
   get: (id) => client.get(`/projects/${id}`),
-  create: (data) => client.post('/projects', data),
-  update: (id, data) => client.put(`/projects/${id}`, data),
-  delete: (id) => client.delete(`/projects/${id}`),
+  getCached: (id) =>
+    dedupedFetch(cacheKey(['projects', 'get', id]), PROJECT_DETAIL_CACHE_TTL, async () => {
+      const { data } = await client.get(`/projects/${id}`);
+      return data;
+    }),
+  create: (data) => {
+    invalidateProjectsCache();
+    return client.post('/projects', data);
+  },
+  update: (id, data) => {
+    invalidateProjectsCache();
+    return client.put(`/projects/${id}`, data);
+  },
+  delete: (id) => {
+    invalidateProjectsCache();
+    return client.delete(`/projects/${id}`);
+  },
   reorder: (projectIds) => client.put('/projects/reorder', { projectIds }),
   getNotes: (id, params) => client.get(`/projects/${id}/notes`, { params }),
   getReferences: (id, params) => client.get(`/projects/${id}/references`, { params }),
@@ -60,7 +87,10 @@ export const projects = {
 
 export const tasks = {
   list: (params) => client.get('/tasks', { params }),
-  create: (data) => client.post('/tasks', data),
+  create: (data) => {
+    if (data?.projectId) invalidateProjectsCache();
+    return client.post('/tasks', data);
+  },
   update: (id, data) => client.put(`/tasks/${id}`, data),
   delete: (id) => client.delete(`/tasks/${id}`),
   reorder: (taskIds) => client.put('/tasks/reorder', { taskIds }),
@@ -132,6 +162,15 @@ export const notes = {
   updateCategory: (id, data) => client.put(`/notes/categories/${id}`, data),
   deleteCategory: (id) => client.delete(`/notes/categories/${id}`),
   reorderCategories: (categoryIds) => client.put('/notes/categories/reorder', { categoryIds }),
+};
+
+export const dashboard = {
+  getSummary: () =>
+    dedupedFetch(cacheKey(['dashboard', 'summary']), 30_000, async () => {
+      const { data } = await client.get('/dashboard');
+      return data;
+    }),
+  invalidateSummary: () => invalidateCache('dashboard:'),
 };
 
 export default client;

@@ -13,7 +13,9 @@ import {
 import { HABIT_MILESTONES, HABIT_COLORS } from '../lib/trackerConstants';
 import { useTrackerData } from '../hooks/useTrackerData';
 import { useOptimisticToggle } from '../hooks/useOptimisticToggle';
+import { useOptimisticHabitReorder } from '../hooks/useOptimisticHabitReorder';
 import TrackerTable from '../components/TrackerTable';
+import TaskPositionInput from '../components/TaskPositionInput';
 import Loader from '../components/Loader';
 
 // ============ MAIN HABIT TRACKER COMPONENT ============
@@ -130,12 +132,37 @@ export default function HabitTracker() {
     }
   }, []);
 
+  const refreshStatsAfterHabitChange = useCallback(async () => {
+    try {
+      await Promise.all([
+        loadDailyStats(false),
+        loadMonthlyStats(),
+        loadStreakStats(),
+        loadHabitStreaks(),
+      ]);
+    } catch (err) {
+      console.error('Failed to refresh stats after habit change:', err);
+    }
+  }, [loadDailyStats, loadMonthlyStats, loadStreakStats, loadHabitStreaks]);
+
+  const { moveHabit, moveHabitToPosition } = useOptimisticHabitReorder({ setHabits });
+
   // ============ CUSTOM DEBOUNCED REFRESH WITH HABIT STREAKS ============
   const debouncedRefreshWithHabitStreaks = useCallback(() => {
     debouncedRefresh();
     // Also refresh habit streaks (this will be called immediately, which is fine)
     loadHabitStreaks();
   }, [debouncedRefresh, loadHabitStreaks]);
+
+  const renderHabitColumnHeader = useCallback(
+    (habit, index) => (
+      <div className="flex flex-col items-center justify-center" title={habit.name}>
+        <span className={`w-4 h-4 rounded-full mb-1 ${HABIT_COLORS[index % HABIT_COLORS.length].dot}`}></span>
+        <span className="text-xs text-slate-500 font-semibold">{index + 1}</span>
+      </div>
+    ),
+    []
+  );
 
   // ============ OPTIMISTIC TOGGLE HOOK ============
   const handleToggle = useOptimisticToggle({
@@ -197,12 +224,15 @@ export default function HabitTracker() {
         const loadStats = async () => {
           setDataLoading(true);
           try {
-            await Promise.all([
-              loadDailyStats(false), // Complete replacement on view change
-              loadMonthlyStats(),
+            const requests = [
+              loadDailyStats(false),
               loadStreakStats(),
               loadHabitStreaks(),
-            ]);
+            ];
+            if (view === 'year') {
+              requests.push(loadMonthlyStats());
+            }
+            await Promise.all(requests);
           } finally {
             setDataLoading(false);
           }
@@ -240,6 +270,7 @@ export default function HabitTracker() {
     try {
       const { data } = await habitsApi.create({ name, icon: newHabitIcon || '✓' });
       setHabits((prev) => [...prev, data]);
+      void refreshStatsAfterHabitChange();
     } catch (err) {
       console.error('Failed to add habit:', err);
       setError('Failed to add habit. Please try again.');
@@ -263,18 +294,57 @@ export default function HabitTracker() {
     setEditHabitIcon('');
   };
 
-  const saveEditHabit = async () => {
+  const saveEditHabit = async (habit) => {
     const name = editHabitName.trim();
     if (!name) return;
 
+    const icon = editHabitIcon || '✓';
+    const optimisticHabit = { ...habit, name, icon };
+    const snapshot = habits;
+
+    setHabits((prev) => prev.map((h) => (h._id === habit._id ? optimisticHabit : h)));
+    cancelEditHabit();
+
     try {
-      const { data } = await habitsApi.update(editingHabitId, { name, icon: editHabitIcon || '✓' });
-      // Update optimistically in the habits list
-      setHabits((prev) => prev.map((h) => (h._id === editingHabitId ? data : h)));
-      cancelEditHabit();
+      const { data } = await habitsApi.update(habit._id, { name, icon });
+      setHabits((prev) => prev.map((h) => (h._id === habit._id ? data : h)));
     } catch (err) {
+      setHabits(snapshot);
       console.error('Failed to edit habit:', err);
       setError('Failed to edit habit. Please try again.');
+    }
+  };
+
+  const deleteHabit = async (id) => {
+    const snapshot = habits;
+    const streakSnapshot = habitStreaks;
+
+    setHabits((prev) => prev.filter((h) => h._id !== id));
+    setHabitStreaks((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setDailyStats((prev) =>
+      prev.map((day) => {
+        const habitStatuses = { ...day.habitStatuses };
+        delete habitStatuses[id];
+        const completedCount = Object.values(habitStatuses).filter(Boolean).length;
+        const totalHabits = snapshot.length - 1;
+        const percentage = totalHabits > 0 ? Math.round((completedCount / totalHabits) * 100) : 0;
+        return { ...day, habitStatuses, percentage };
+      })
+    );
+
+    try {
+      await habitsApi.delete(id);
+      void refreshStatsAfterHabitChange();
+    } catch (err) {
+      setHabits(snapshot);
+      setHabitStreaks(streakSnapshot);
+      console.error('Failed to delete habit:', err);
+      setError('Failed to delete habit. Please try again.');
+      void refreshStatsAfterHabitChange();
     }
   };
 
@@ -290,38 +360,12 @@ export default function HabitTracker() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
-      onConfirm: async () => {
-        try {
-          await habitsApi.delete(id);
-          await loadHabits();
-          setConfirmModal(null);
-        } catch (err) {
-          console.error('Failed to delete habit:', err);
-          setError('Failed to delete habit. Please try again.');
-          setConfirmModal(null);
-        }
+      onConfirm: () => {
+        setConfirmModal(null);
+        void deleteHabit(id);
       },
       onCancel: () => setConfirmModal(null),
     });
-  };
-
-  /**
-   * Handle move habit (reorder)
-   */
-  const moveHabit = async (index, direction) => {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= habits.length) return;
-
-    const newHabits = [...habits];
-    [newHabits[index], newHabits[targetIndex]] = [newHabits[targetIndex], newHabits[index]];
-
-    try {
-      await habitsApi.reorder(newHabits.map((h) => h._id));
-      await loadHabits();
-    } catch (err) {
-      console.error('Failed to reorder habits:', err);
-      setError('Failed to reorder habits. Please try again.');
-    }
   };
 
   // ============ NAVIGATION HANDLERS ============
@@ -507,9 +551,14 @@ export default function HabitTracker() {
           <ul className="space-y-2">
             {habits.map((habit, index) => (
               <li key={habit._id} className="flex items-center gap-3 bg-slate-50 rounded-lg px-3 py-2">
-                <span className="text-xs text-slate-500 font-semibold w-5 text-center">{index + 1}</span>
                 {editingHabitId === habit._id ? (
-                  <>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      saveEditHabit(habit);
+                    }}
+                    className="flex flex-1 items-center gap-2"
+                  >
                     <input
                       type="text"
                       value={editHabitIcon}
@@ -525,15 +574,20 @@ export default function HabitTracker() {
                       autoFocus
                     />
                     <button
-                      onClick={saveEditHabit}
-                      className="text-emerald-600 hover:text-emerald-700 text-sm font-medium"
+                      type="submit"
+                      disabled={!editHabitName.trim()}
+                      className="text-emerald-600 hover:text-emerald-700 text-sm font-medium disabled:opacity-50"
                     >
                       Save
                     </button>
-                    <button onClick={cancelEditHabit} className="text-slate-500 hover:text-slate-700 text-sm">
+                    <button
+                      type="button"
+                      onClick={cancelEditHabit}
+                      className="text-slate-500 hover:text-slate-700 text-sm"
+                    >
                       Cancel
                     </button>
-                  </>
+                  </form>
                 ) : (
                   <>
                     <span
@@ -561,29 +615,40 @@ export default function HabitTracker() {
                         )}
                       </div>
                     )}
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-0">
                       <button
-                        onClick={() => moveHabit(index, -1)}
+                        type="button"
+                        onClick={() => moveHabit(habit, 'up')}
                         disabled={index === 0}
                         className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
+                        title="Move up"
                       >
                         ↑
                       </button>
                       <button
-                        onClick={() => moveHabit(index, 1)}
+                        type="button"
+                        onClick={() => moveHabit(habit, 'down')}
                         disabled={index === habits.length - 1}
                         className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
+                        title="Move down"
                       >
                         ↓
                       </button>
                     </div>
+                    <TaskPositionInput
+                      position={index + 1}
+                      max={habits.length}
+                      onCommit={(pos) => moveHabitToPosition(habit, pos)}
+                    />
                     <button
+                      type="button"
                       onClick={() => startEditHabit(habit)}
                       className="text-slate-400 hover:text-emerald-600 text-sm"
                     >
                       Edit
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDeleteHabit(habit._id)}
                       className="text-slate-400 hover:text-red-600 text-sm"
                     >
@@ -607,12 +672,7 @@ export default function HabitTracker() {
           getStatus={(dayStats, habitId) => dayStats?.habitStatuses?.[habitId] || false}
           onToggle={(habitId, dateStr) => handleToggle(habitId, dateStr)}
           progressThresholds={{ emerald: STREAK_THRESHOLD_PERCENTAGE, amber: 50 }}
-          renderColumnHeader={(habit, index) => (
-            <div className="flex flex-col items-center justify-center" title={habit.name}>
-              <span className={`w-4 h-4 rounded-full mb-1 ${HABIT_COLORS[index % HABIT_COLORS.length].dot}`}></span>
-              <span className="text-xs text-slate-500 font-semibold">{index + 1}</span>
-            </div>
-          )}
+          renderColumnHeader={renderHabitColumnHeader}
           view={view}
           title={view === 'week' ? 'Weekly Progress' : 'Monthly Progress'}
         />

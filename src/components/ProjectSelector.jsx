@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { projects as projectsApi } from '../api/client';
+import { useProjects } from '../context/ProjectsContext';
 
 function buildProjectHierarchy(projects) {
   const projectMap = new Map();
@@ -81,38 +81,17 @@ function ProjectOption({ project, level = 0, selected, onToggle, searchTerm }) {
 }
 
 export default function ProjectSelector({ selected = [], onChange, onClose, projects: externalProjects }) {
-  const [fetchedProjects, setFetchedProjects] = useState([]);
-  const [loading, setLoading] = useState(externalProjects == null);
+  const { allProjects, allProjectsLoading, allProjectsLoaded, fetchAllProjects } = useProjects();
   const [searchTerm, setSearchTerm] = useState('');
-  const projects = externalProjects ?? fetchedProjects;
+  const projects = externalProjects ?? allProjects;
+  const loading = externalProjects == null && allProjectsLoading && !allProjectsLoaded;
 
   useEffect(() => {
-    if (externalProjects != null) {
-      setLoading(false);
-      return;
+    if (externalProjects != null) return;
+    if (!allProjectsLoaded) {
+      fetchAllProjects();
     }
-    let cancelled = false;
-    async function loadProjects() {
-      try {
-        const { data } = await projectsApi.list({ includeArchived: true });
-        if (!cancelled) {
-          setFetchedProjects(data || []);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          console.error('Failed to load projects:', err);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-    loadProjects();
-    return () => {
-      cancelled = true;
-    };
-  }, [externalProjects]);
+  }, [externalProjects, allProjectsLoaded, fetchAllProjects]);
 
   const hierarchy = useMemo(() => buildProjectHierarchy(projects), [projects]);
 

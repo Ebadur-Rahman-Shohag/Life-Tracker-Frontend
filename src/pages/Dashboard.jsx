@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { prayers as prayersApi } from '../api/client';
+import { prayers as prayersApi, dashboard as dashboardApi } from '../api/client';
 import PrayerChecklist from '../components/PrayerChecklist';
 import SummaryCard from '../components/SummaryCard';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { PRAYER_CATEGORIES } from '../lib/categories';
 import { toISODateString } from '../lib/dateUtils';
 import { TOTAL_DAILY_PRAYERS } from '../lib/trackerConstants';
-import Loader from '../components/Loader';
 
 // Lazy load chart component to reduce initial bundle
 import { lazy, Suspense } from 'react';
@@ -19,17 +18,36 @@ function getDayStart(d = new Date()) {
   return x;
 }
 
-function getDayEnd(d = new Date()) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
-
 function formatCurrency(amount) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
   }).format(amount || 0);
+}
+
+function SummaryCardSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border-2 border-slate-200 p-4 shadow-sm animate-pulse">
+      <div className="h-4 bg-slate-200 rounded w-1/2 mb-3" />
+      <div className="h-7 bg-slate-200 rounded-full w-1/3 mb-2" />
+      <div className="h-3 bg-slate-200 rounded w-2/3" />
+    </div>
+  );
+}
+
+function SectionSkeleton({ lines = 3 }) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm animate-pulse space-y-3">
+      <div className="h-5 bg-slate-200 rounded w-1/3" />
+      {Array.from({ length: lines }).map((_, i) => (
+        <div key={i} className="h-4 bg-slate-100 rounded" />
+      ))}
+    </div>
+  );
+}
+
+function ChartSkeleton() {
+  return <div className="h-[120px] bg-slate-50 animate-pulse rounded" />;
 }
 
 export default function Dashboard() {
@@ -48,6 +66,20 @@ export default function Dashboard() {
   const today = getDayStart();
   const todayStr = toISODateString(today);
   const [todayPrayers, setTodayPrayers] = useState({});
+  const [chartsReady, setChartsReady] = useState(false);
+
+  useEffect(() => {
+    if (loading) {
+      setChartsReady(false);
+      return undefined;
+    }
+    if (typeof requestIdleCallback === 'function') {
+      const id = requestIdleCallback(() => setChartsReady(true));
+      return () => cancelIdleCallback(id);
+    }
+    const t = setTimeout(() => setChartsReady(true), 0);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   // Update today's prayers from dashboard data
   useEffect(() => {
@@ -62,14 +94,21 @@ export default function Dashboard() {
   }, [prayersData.todayPrayers]);
 
   async function handlePrayerToggle(category, prayed) {
+    const previous = todayPrayers[category];
     try {
-      await prayersApi.toggle(category, todayStr);
       setTodayPrayers((prev) => ({ ...prev, [category]: prayed }));
-      // Refresh dashboard data after toggle
-      setTimeout(() => refetch(), 500);
+      await prayersApi.toggle(category, todayStr);
+      dashboardApi.invalidateSummary();
+      refetch({ silent: true });
     } catch (err) {
+      setTodayPrayers((prev) => ({ ...prev, [category]: previous }));
       console.error(err);
     }
+  }
+
+  function handleRefresh() {
+    dashboardApi.invalidateSummary();
+    refetch();
   }
 
   // Calculate metrics
@@ -125,7 +164,37 @@ export default function Dashboard() {
   });
 
   if (loading) {
-    return <Loader message="Loading dashboard..." />;
+    return (
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
+          <button
+            disabled
+            className="px-3 py-2 text-sm bg-slate-100 text-slate-400 rounded-lg cursor-not-allowed"
+          >
+            ↻ Refresh
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SummaryCardSkeleton key={i} />
+          ))}
+        </div>
+        <SectionSkeleton lines={4} />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <ChartSkeleton />
+          <ChartSkeleton />
+          <ChartSkeleton />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SectionSkeleton lines={4} />
+          <SectionSkeleton lines={4} />
+          <SectionSkeleton lines={4} />
+          <SectionSkeleton lines={4} />
+          <SectionSkeleton lines={4} />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -133,7 +202,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
         <button
-          onClick={refetch}
+          onClick={handleRefresh}
           className="px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
           title="Refresh data"
         >
@@ -245,7 +314,7 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Trend Charts Section */}
+      {/* Trend Charts Section — deferred until main content paints */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -257,14 +326,18 @@ export default function Dashboard() {
               View →
             </Link>
           </div>
-          <Suspense fallback={<div className="h-[120px] bg-slate-50 animate-pulse rounded" />}>
-            <MiniTrendChart
-              data={prayerTrendData}
-              type="bar"
-              height={120}
-              color="#059669"
-            />
-          </Suspense>
+          {chartsReady ? (
+            <Suspense fallback={<ChartSkeleton />}>
+              <MiniTrendChart
+                data={prayerTrendData}
+                type="bar"
+                height={120}
+                color="#059669"
+              />
+            </Suspense>
+          ) : (
+            <ChartSkeleton />
+          )}
           <div className="mt-2 text-xs text-slate-500 text-center">
             Last 7 days completion %
           </div>
@@ -280,14 +353,18 @@ export default function Dashboard() {
               View →
             </Link>
           </div>
-          <Suspense fallback={<div className="h-[120px] bg-slate-50 animate-pulse rounded" />}>
-            <MiniTrendChart
-              data={habitTrendData}
-              type="line"
-              height={120}
-              color="#3b82f6"
-            />
-          </Suspense>
+          {chartsReady ? (
+            <Suspense fallback={<ChartSkeleton />}>
+              <MiniTrendChart
+                data={habitTrendData}
+                type="line"
+                height={120}
+                color="#3b82f6"
+              />
+            </Suspense>
+          ) : (
+            <ChartSkeleton />
+          )}
           <div className="mt-2 text-xs text-slate-500 text-center">
             Last 7 days completion %
           </div>
@@ -303,14 +380,18 @@ export default function Dashboard() {
               View →
             </Link>
           </div>
-          <Suspense fallback={<div className="h-[120px] bg-slate-50 animate-pulse rounded" />}>
-            <MiniTrendChart
-              data={taskTrendData}
-              type="bar"
-              height={120}
-              color="#f59e0b"
-            />
-          </Suspense>
+          {chartsReady ? (
+            <Suspense fallback={<ChartSkeleton />}>
+              <MiniTrendChart
+                data={taskTrendData}
+                type="bar"
+                height={120}
+                color="#f59e0b"
+              />
+            </Suspense>
+          ) : (
+            <ChartSkeleton />
+          )}
           <div className="mt-2 text-xs text-slate-500 text-center">
             Today&apos;s completion
           </div>

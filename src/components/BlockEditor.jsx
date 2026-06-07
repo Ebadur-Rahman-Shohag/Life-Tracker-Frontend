@@ -1,92 +1,40 @@
 import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
-import { Table } from '@tiptap/extension-table';
-import { TableRow } from '@tiptap/extension-table-row';
-import { TableHeader } from '@tiptap/extension-table-header';
-import { TableCell } from '@tiptap/extension-table-cell';
-import { createLowlight } from 'lowlight';
 import { useEffect, useRef } from 'react';
+import { buildNoteExtensions, EMPTY_NOTE_DOC } from '../lib/noteTipTap';
+import BlockEditorToolbar from './BlockEditorToolbar';
 
-// Import languages for syntax highlighting
-import javascript from 'highlight.js/lib/languages/javascript';
-import typescript from 'highlight.js/lib/languages/typescript';
-import python from 'highlight.js/lib/languages/python';
-import java from 'highlight.js/lib/languages/java';
-import css from 'highlight.js/lib/languages/css';
-import html from 'highlight.js/lib/languages/xml';
-import json from 'highlight.js/lib/languages/json';
-import bash from 'highlight.js/lib/languages/bash';
-
-const lowlight = createLowlight();
-
-lowlight.register('javascript', javascript);
-lowlight.register('typescript', typescript);
-lowlight.register('python', python);
-lowlight.register('java', java);
-lowlight.register('css', css);
-lowlight.register('html', html);
-lowlight.register('json', json);
-lowlight.register('bash', bash);
-
-/**
- * `toggleHeading` is block-scoped: it turns every textblock in the current selection
- * into a heading. A multi-paragraph (or "select all" style) range therefore
- * flips many blocks at once. Collapse to a caret in the anchor block so toolbar
- * clicks target only the line/block where the selection started.
- */
-function toggleHeadingSingleBlock(editor, level) {
-  const { state } = editor;
-  const { empty, $from, $to, $anchor } = state.selection;
-  const chain = editor.chain().focus();
-  if (!empty && $from.parent !== $to.parent) {
-    chain.setTextSelection($anchor.pos);
-  }
-  chain.toggleHeading({ level }).run();
-}
-
-export default function BlockEditor({ content, onChange, placeholder = 'Start writing...' }) {
+export default function BlockEditor({ content, onChange, onSaveRequest, placeholder = 'Start writing...' }) {
   const lastEmittedRef = useRef(null);
+  const onChangeRef = useRef(onChange);
+  const onSaveRequestRef = useRef(onSaveRequest);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    onSaveRequestRef.current = onSaveRequest;
+  }, [onSaveRequest]);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: {
-          levels: [1, 2, 3],
-        },
-        codeBlock: false, // Use CodeBlockLowlight instead
-      }),
-      Table.configure({
-        resizable: true,
-        lastColumnResizable: true,
-        HTMLAttributes: {
-          class: 'tiptap-table',
-        },
-      }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      CodeBlockLowlight.configure({
-        lowlight,
-        defaultLanguage: 'plaintext',
-      }),
-      Placeholder.configure({
-        placeholder,
-      }),
-    ],
-    content: content || {
-      type: 'doc',
-      content: [{ type: 'paragraph' }],
-    },
-    onUpdate: ({ editor }) => {
-      const json = editor.getJSON();
+    extensions: buildNoteExtensions({ placeholder }),
+    content: content || EMPTY_NOTE_DOC,
+    onUpdate: ({ editor: ed }) => {
+      const json = ed.getJSON();
       lastEmittedRef.current = json;
-      onChange(json);
+      onChangeRef.current(json);
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-slate max-w-none focus:outline-none min-h-[8rem] px-4 py-3',
+        class: 'note-editor-content focus:outline-none min-h-[8rem] px-4 py-3',
+      },
+      handleKeyDown: (_view, event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault();
+          onSaveRequestRef.current?.();
+          return true;
+        }
+        return false;
       },
     },
   });
@@ -96,11 +44,10 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
 
     if (!content) {
       lastEmittedRef.current = null;
-      editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] }, { emitUpdate: false });
+      editor.commands.setContent(EMPTY_NOTE_DOC, { emitUpdate: false });
       return;
     }
 
-    // Skip sync when content came from the editor (avoids overwriting blockquote, lists, etc.)
     const emittedStr = lastEmittedRef.current ? JSON.stringify(lastEmittedRef.current) : null;
     const contentStr = JSON.stringify(content);
     if (emittedStr === contentStr) {
@@ -134,145 +81,9 @@ export default function BlockEditor({ content, onChange, placeholder = 'Start wr
     );
   }
 
-  const MenuBar = () => (
-    <div className="border-b border-slate-200 p-2 flex flex-wrap items-center gap-2 bg-slate-50 rounded-t-lg">
-      <div className="flex items-center gap-1 border-r border-slate-300 pr-2">
-        <button
-          type="button"
-          onClick={() => toggleHeadingSingleBlock(editor, 1)}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('heading', { level: 1 })
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Heading 1"
-        >
-          H1
-        </button>
-        <button
-          type="button"
-          onClick={() => toggleHeadingSingleBlock(editor, 2)}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('heading', { level: 2 })
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Heading 2"
-        >
-          H2
-        </button>
-        <button
-          type="button"
-          onClick={() => toggleHeadingSingleBlock(editor, 3)}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('heading', { level: 3 })
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Heading 3"
-        >
-          H3
-        </button>
-      </div>
-
-      <div className="flex items-center gap-1 border-r border-slate-300 pr-2">
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('bold') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Bold"
-        >
-          <strong>B</strong>
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('italic') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Italic"
-        >
-          <em>I</em>
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleCode().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('code') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Inline Code"
-        >
-          {'</>'}
-        </button>
-      </div>
-
-      <div className="flex items-center gap-1 border-r border-slate-300 pr-2">
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('bulletList') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Bullet List"
-        >
-          •
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('orderedList') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Numbered List"
-        >
-          1.
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('blockquote') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Quote"
-        >
-          {'"'}
-        </button>
-      </div>
-
-      <div className="flex items-center gap-1 pr-2">
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          className={`px-2 py-1 rounded text-sm font-medium ${
-            editor.isActive('codeBlock') ? 'bg-emerald-100 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Code Block"
-        >
-          {'{ }'}
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            editor
-              .chain()
-              .focus()
-              .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-              .run()
-          }
-          className="px-2 py-1 rounded text-sm font-medium text-slate-600 hover:bg-slate-100"
-          title="Insert Table"
-        >
-          ▦
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <div className="flex w-full min-h-[200px] max-h-full flex-col border border-slate-300 rounded-lg overflow-hidden bg-white h-full">
-      <MenuBar />
+      <BlockEditorToolbar editor={editor} />
       <div className="flex-1 min-h-0 overflow-y-auto">
         <EditorContent editor={editor} className="min-h-[8rem]" />
       </div>

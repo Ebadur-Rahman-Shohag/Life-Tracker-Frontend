@@ -28,6 +28,13 @@ function normalizeId(id) {
   return typeof id === 'string' ? id : String(id._id || id);
 }
 
+function normalizeUrl(url) {
+  const trimmed = (url || '').trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 const EMPTY_DEFAULT_PROJECTS = [];
 
 /**
@@ -86,6 +93,15 @@ export default function ReferenceFormModal({
 
   useEffect(() => {
     if (!open) return;
+    function handleEscape(event) {
+      if (event.key === 'Escape' && !saving) onClose();
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [open, saving, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
     function handleClickOutside(event) {
       if (selectorRef.current && !selectorRef.current.contains(event.target)) {
         setShowProjectSelector(false);
@@ -107,7 +123,7 @@ export default function ReferenceFormModal({
     }
     const payload = {
       title,
-      url: form.url?.trim() || '',
+      url: normalizeUrl(form.url),
       description: form.description != null ? String(form.description) : '',
       tags: parseTagsString(form.tags),
       isFavorite: form.isFavorite,

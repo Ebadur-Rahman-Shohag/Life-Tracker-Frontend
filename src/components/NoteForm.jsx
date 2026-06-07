@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import BlockEditor from './BlockEditor';
 import ProjectSelector from './ProjectSelector';
+import { EMPTY_NOTE_DOC } from '../lib/noteTipTap';
 
 function normalizeTagsInput(value) {
   return value
@@ -68,16 +69,16 @@ export default function NoteForm({
   const [tagsInput, setTagsInput] = useState('');
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [saving, setSaving] = useState(false);
   const selectorRef = useRef(null);
+  const formRef = useRef(null);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
       // Reset form when closed
       setTitle('');
-      setContent({
-        type: 'doc',
-        content: [{ type: 'paragraph' }],
-      });
+      setContent(EMPTY_NOTE_DOC);
       setCategory('Uncategorized');
       setIsFavorite(false);
       setTagsInput('');
@@ -98,10 +99,7 @@ export default function NoteForm({
       setContent(textToTipTapJSON(initialNote.content));
     } else {
       // Empty note
-      setContent({
-        type: 'doc',
-        content: [{ type: 'paragraph' }],
-      });
+      setContent(EMPTY_NOTE_DOC);
     }
     
     setCategory(initialNote?.category || 'Uncategorized');
@@ -123,21 +121,48 @@ export default function NoteForm({
     }
   }, [showProjectSelector]);
 
+  useEffect(() => {
+    savingRef.current = saving;
+  }, [saving]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    function onKeyDown(e) {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
+      if (e.target.closest('[data-link-input]')) return;
+      e.preventDefault();
+      if (!savingRef.current && title.trim()) {
+        formRef.current?.requestSubmit();
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, title]);
+
   if (!open) return null;
 
   async function handleSubmit(e) {
     e.preventDefault();
     const trimmedTitle = title.trim();
-    if (!trimmedTitle) return;
+    if (!trimmedTitle || saving) return;
 
-    await onSubmit({
-      title: trimmedTitle,
-      blocks: content, // Send TipTap JSON as 'blocks', not 'content'
-      category: (category || 'Uncategorized').trim(),
-      isFavorite,
-      tags: normalizeTagsInput(tagsInput),
-      projectIds: selectedProjectIds,
-    });
+    setSaving(true);
+    try {
+      await onSubmit({
+        title: trimmedTitle,
+        blocks: content, // Send TipTap JSON as 'blocks', not 'content'
+        category: (category || 'Uncategorized').trim(),
+        isFavorite,
+        tags: normalizeTagsInput(tagsInput),
+        projectIds: selectedProjectIds,
+      });
+    } catch {
+      // Parent surfaces the error message.
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -157,7 +182,7 @@ export default function NoteForm({
         </div>
 
         {/* Form: scroll only the main column; project dropdown is outside overflow so it is not clipped */}
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+        <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
               <div className="space-y-1">
@@ -204,6 +229,11 @@ export default function NoteForm({
                   <BlockEditor
                     content={content}
                     onChange={(json) => setContent(json)}
+                    onSaveRequest={() => {
+                      if (!savingRef.current && title.trim()) {
+                        formRef.current?.requestSubmit();
+                      }
+                    }}
                     placeholder="Start writing… Use the toolbar above for headings, lists, code blocks, and tables."
                   />
                 </div>
@@ -288,21 +318,28 @@ export default function NoteForm({
 
           {/* Fixed Footer */}
           <div className="px-5 py-4 border-t border-slate-200 bg-white shrink-0">
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={!title.trim()}
-                className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {isEdit ? 'Save' : 'Create'}
-              </button>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-slate-500 hidden sm:block">
+                Press <kbd className="px-1 py-0.5 rounded border border-slate-200 bg-slate-50 text-[10px]">Ctrl</kbd>
+                +<kbd className="px-1 py-0.5 rounded border border-slate-200 bg-slate-50 text-[10px]">Enter</kbd> to save
+              </p>
+              <div className="flex items-center justify-end gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={saving}
+                  className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!title.trim() || saving}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700 disabled:opacity-50 min-w-[5.5rem]"
+                >
+                  {saving ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+                </button>
+              </div>
             </div>
           </div>
         </form>

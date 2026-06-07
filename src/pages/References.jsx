@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { references as referencesApi, projects as projectsApi } from '../api/client';
+import { references as referencesApi } from '../api/client';
+import { useProjects } from '../context/ProjectsContext';
 import Loader from '../components/Loader';
 import ConfirmModal from '../components/ConfirmModal';
 import ReferenceFormModal from '../components/ReferenceFormModal';
@@ -29,11 +30,13 @@ function truncate(text, max = 240) {
 export default function References() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [list, setList] = useState([]);
-  const [projects, setProjects] = useState([]);
+  const { allProjects: projects, allProjectsLoaded, fetchAllProjects } = useProjects();
   const [initialLoad, setInitialLoad] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [projectFilterId, setProjectFilterId] = useState('');
   const [favoriteFilter, setFavoriteFilter] = useState('all');
@@ -43,9 +46,12 @@ export default function References() {
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
+  const loadSeqRef = useRef(0);
+  const isFirstLoadRef = useRef(true);
+
   const listParams = useMemo(() => {
     const p = { sort: sortBy };
-    const q = searchQuery.trim();
+    const q = debouncedSearch.trim();
     if (q) p.q = q;
     const tag = tagFilter.trim();
     if (tag) p.tag = tag;
@@ -53,32 +59,40 @@ export default function References() {
     if (favoriteFilter === 'true') p.favorite = 'true';
     if (favoriteFilter === 'false') p.favorite = 'false';
     return p;
-  }, [searchQuery, tagFilter, projectFilterId, favoriteFilter, sortBy]);
+  }, [debouncedSearch, tagFilter, projectFilterId, favoriteFilter, sortBy]);
+
+  const hasActiveFilters = Boolean(
+    debouncedSearch.trim() || tagFilter.trim() || projectFilterId || favoriteFilter !== 'all'
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await projectsApi.list({ includeArchived: true });
-        if (!cancelled) setProjects(Array.isArray(data) ? data : []);
-      } catch {
-        if (!cancelled) setProjects([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!allProjectsLoaded) {
+      fetchAllProjects();
+    }
+  }, [allProjectsLoaded, fetchAllProjects]);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    const isFirst = isFirstLoadRef.current;
     setError(null);
+    if (!isFirst) setListLoading(true);
     try {
       const { data } = await referencesApi.list(listParams);
+      if (seq !== loadSeqRef.current) return;
       setList(Array.isArray(data) ? data : []);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(e.response?.data?.message || e.message || 'Failed to load references');
     } finally {
+      if (seq !== loadSeqRef.current) return;
+      isFirstLoadRef.current = false;
       setInitialLoad(false);
+      setListLoading(false);
     }
   }, [listParams]);
 
@@ -108,6 +122,7 @@ export default function References() {
             ref = data;
           } catch {
             if (!cancelled) {
+              setError('Reference not found.');
               setSearchParams(
                 (p) => {
                   const next = new URLSearchParams(p);
@@ -156,26 +171,87 @@ export default function References() {
 
   async function handleDeleteConfirmed() {
     if (!confirmDelete) return;
+    const deleted = confirmDelete;
     try {
-      await referencesApi.delete(confirmDelete._id);
+      await referencesApi.delete(deleted._id);
       setConfirmDelete(null);
-      await load();
+      setList((prev) => prev.filter((r) => r._id !== deleted._id));
     } catch {
       setConfirmDelete(null);
+      setError('Failed to delete reference. Please try again.');
+      await load();
     }
   }
 
   async function handleToggleFavorite(ref) {
+    const previous = ref.isFavorite;
+    setList((prev) =>
+      prev.map((r) => (r._id === ref._id ? { ...r, isFavorite: !r.isFavorite } : r))
+    );
     try {
-      await referencesApi.update(ref._id, { isFavorite: !ref.isFavorite });
-      await load();
+      await referencesApi.update(ref._id, { isFavorite: !previous });
     } catch {
-      // ignore
+      setList((prev) =>
+        prev.map((r) => (r._id === ref._id ? { ...r, isFavorite: previous } : r))
+      );
+      setError('Failed to update favorite.');
     }
+  }
+
+  function handleTagClick(tag) {
+    setTagFilter(tag);
   }
 
   if (initialLoad) {
     return <Loader message="Loading references…" />;
+  }
+
+  function renderEmptyState() {
+    if (error && list.length === 0) {
+      return (
+        <div className="text-center py-16 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+          <p className="text-slate-600 mb-2">Could not load references.</p>
+          <p className="text-sm text-slate-500">Check the message above and try again.</p>
+        </div>
+      );
+    }
+    if (hasActiveFilters) {
+      return (
+        <div className="text-center py-16 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+          <p className="text-slate-600 mb-2">No references match your filters.</p>
+          <p className="text-sm text-slate-500 mb-4">Try adjusting your search or filters.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchQuery('');
+              setDebouncedSearch('');
+              setTagFilter('');
+              setProjectFilterId('');
+              setFavoriteFilter('all');
+            }}
+            className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium"
+          >
+            Clear filters
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="text-center py-16 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+        <p className="text-slate-600 mb-2">No references yet. Add a link, short summary, or optional URL.</p>
+        <p className="text-sm text-slate-500 mb-4 max-w-md mx-auto">
+          Link items to one or more projects to see them in the{' '}
+          <strong className="font-medium text-slate-600">Connected References</strong> section on each project page.
+        </p>
+        <button
+          type="button"
+          onClick={openCreate}
+          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+        >
+          Add reference
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -203,7 +279,7 @@ export default function References() {
           type="search"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search title or description…"
+          placeholder="Search title, description, URL, or tags…"
           className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none"
         />
         <input
@@ -244,22 +320,16 @@ export default function References() {
         </select>
       </div>
 
-      {list.length === 0 && !initialLoad ? (
-        <div className="text-center py-16 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
-          <p className="text-slate-600 mb-2">No references yet. Add a link, short summary, or optional URL.</p>
-          <p className="text-sm text-slate-500 mb-4 max-w-md mx-auto">
-            Link items to one or more projects to see them in the <strong className="font-medium text-slate-600">Connected References</strong> section on each project page.
-          </p>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
-          >
-            Add reference
-          </button>
-        </div>
+      {listLoading && (
+        <p className="text-sm text-slate-500 mb-3" aria-live="polite">
+          Updating…
+        </p>
+      )}
+
+      {list.length === 0 ? (
+        renderEmptyState()
       ) : (
-        <ul className="space-y-3">
+        <ul className={`space-y-3 transition-opacity ${listLoading ? 'opacity-60' : ''}`}>
           {list.map((ref) => (
             <li key={ref._id}>
               <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow">
@@ -304,12 +374,14 @@ export default function References() {
                     {ref.tags && ref.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-3">
                         {ref.tags.map((t) => (
-                          <span
+                          <button
                             key={t}
-                            className="inline-flex px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700"
+                            type="button"
+                            onClick={() => handleTagClick(t)}
+                            className="inline-flex px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
                           >
                             {t}
-                          </span>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -351,6 +423,7 @@ export default function References() {
       )}
 
       <ReferenceFormModal
+        key={editing?._id || 'create'}
         open={modalOpen}
         onClose={closeModal}
         mode={editing ? 'edit' : 'create'}

@@ -1,21 +1,7 @@
+import { memo, useMemo } from 'react';
 import { toISODateString, formatDateFull } from '../lib/dateUtils';
 
-/**
- * TrackerTable - Shared calendar table component for trackers
- * 
- * @param {Object} props
- * @param {Array} props.dates - Array of dates to display
- * @param {Array} props.dailyStats - Array of daily stats objects
- * @param {Date} props.today - Today's date for comparison
- * @param {Array} props.columns - Array of column items (habits or prayers)
- * @param {Function} props.getStatus - Function to get status for a column item: (dayStats, columnId) => boolean
- * @param {Function} props.onToggle - Function to handle toggle: (columnId, dateStr, currentStatus?) => void
- * @param {Object} props.progressThresholds - Progress thresholds for color coding: { emerald: number, amber: number }
- * @param {Function} props.renderColumnHeader - Function to render column header: (column, index) => ReactNode
- * @param {string} props.view - Current view ('week' | 'month')
- * @param {string} props.title - Table title
- */
-export default function TrackerTable({
+function TrackerTable({
   dates,
   dailyStats,
   today,
@@ -27,6 +13,13 @@ export default function TrackerTable({
   view,
   title,
 }) {
+  const statsByDate = useMemo(
+    () => new Map(dailyStats.map((d) => [toISODateString(d.date), d])),
+    [dailyStats]
+  );
+
+  const todayStr = toISODateString(today);
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm overflow-x-auto">
       <h2 className="text-lg font-semibold text-slate-800 mb-3">{title}</h2>
@@ -45,9 +38,9 @@ export default function TrackerTable({
         <tbody>
           {dates.map((date) => {
             const dateStr = toISODateString(date);
-            const dayStats = dailyStats.find((d) => toISODateString(d.date) === dateStr);
+            const dayStats = statsByDate.get(dateStr);
             const isFuture = date > today;
-            const isToday = dateStr === toISODateString(today);
+            const isToday = dateStr === todayStr;
             const percent = dayStats?.percentage || 0;
 
             return (
@@ -114,3 +107,5 @@ export default function TrackerTable({
     </div>
   );
 }
+
+export default memo(TrackerTable);

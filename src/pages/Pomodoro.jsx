@@ -75,8 +75,19 @@ function SettingsForm({ values, onClose, onSave, limitsText }) {
   const [l, setL] = useState(String(values.longBreakMinutes));
   const [n, setN] = useState(String(values.pomodorosBeforeLong));
 
+  function handleSave(e) {
+    e.preventDefault();
+    onSave({
+      workMinutes: Number(w),
+      shortBreakMinutes: Number(s),
+      longBreakMinutes: Number(l),
+      pomodorosBeforeLong: Number(n),
+    });
+    onClose();
+  }
+
   return (
-    <>
+    <form onSubmit={handleSave}>
       <h2 id="pomodoro-settings-title" className="text-lg font-semibold text-slate-800 mb-4">
         Timer settings
       </h2>
@@ -103,23 +114,11 @@ function SettingsForm({ values, onClose, onSave, limitsText }) {
         <button type="button" className={btnSecondary} onClick={onClose}>
           Cancel
         </button>
-        <button
-          type="button"
-          className={btnPrimary}
-          onClick={() => {
-            onSave({
-              workMinutes: Number(w),
-              shortBreakMinutes: Number(s),
-              longBreakMinutes: Number(l),
-              pomodorosBeforeLong: Number(n),
-            });
-            onClose();
-          }}
-        >
+        <button type="submit" className={btnPrimary}>
           Save
         </button>
       </div>
-    </>
+    </form>
   );
 }
 
@@ -206,7 +205,7 @@ export default function Pomodoro() {
 
       <p className="text-sm text-slate-600 mb-4">
         When a break ends, the next focus only starts when you press Start. Breaks start automatically
-        when a focus or break phase completes. Switching the tab pauses the timer.
+        when a focus or break phase completes. Switching Focus / Short / Long pauses the timer.
       </p>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-6 mb-6">

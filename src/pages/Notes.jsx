@@ -1,13 +1,31 @@
-import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { notes as notesApi, projects as projectsApi } from '../api/client';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense, memo } from 'react';
+import { notes as notesApi } from '../api/client';
+import { useProjects } from '../context/ProjectsContext';
 import { buildCategoryList, loadManagedCategoriesWithSeeding } from '../lib/noteFormResources';
+import { EMPTY_NOTE_DOC } from '../lib/noteTipTap';
 import Loader from '../components/Loader';
 import ConfirmModal from '../components/ConfirmModal';
 
-// Lazy load heavy components
 const NoteForm = lazy(() => import('../components/NoteForm'));
 const NoteCategoryForm = lazy(() => import('../components/NoteCategoryForm'));
 const NoteDetailView = lazy(() => import('../components/NoteDetailView'));
+
+function NoteFormModalShell({ open, onClose }) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-xl p-8 flex flex-col items-center gap-3">
+        <div
+          className="h-8 w-8 rounded-full border-2 border-slate-200 border-t-emerald-600 animate-spin"
+          aria-hidden
+        />
+        <p className="text-sm text-slate-600">Loading editor…</p>
+      </div>
+    </div>
+  );
+}
 
 function formatTimestamp(iso) {
   try {
@@ -28,6 +46,10 @@ function truncate(text, max = 200) {
   const t = (text || '').trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max).trim()}…`;
+}
+
+function notePreviewText(note) {
+  return note.searchText || note.content || '';
 }
 
 function countForCategory(stats, category) {
@@ -52,12 +74,23 @@ function getCategoryColor(managedCategories, categoryName) {
   return cat?.color || null;
 }
 
-function NoteCard({ note, projects = [], onView, onEdit, onDelete, onToggleFavorite, onToggleArchive }) {
+const NoteCard = memo(function NoteCard({
+  note,
+  projects = [],
+  onView,
+  onEdit,
+  onDelete,
+  onToggleFavorite,
+  onToggleArchive,
+}) {
   const connectedProjects = useMemo(() => {
     if (!note.projectIds || note.projectIds.length === 0) return [];
     const ids = new Set((note.projectIds || []).map((id) => String(id)));
     return projects.filter((p) => ids.has(String(p._id)));
   }, [note.projectIds, projects]);
+
+  const previewText = notePreviewText(note);
+
   return (
     <div
       className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col cursor-pointer"
@@ -83,29 +116,11 @@ function NoteCard({ note, projects = [], onView, onEdit, onDelete, onToggleFavor
         </button>
       </div>
 
-      {(() => {
-        // Generate preview text from content
-        let previewText = '';
-        if (note.blocks && typeof note.blocks === 'object' && note.blocks.type === 'doc') {
-          // Extract text from TipTap JSON document
-          const extractText = (node) => {
-            if (typeof node === 'string') return node;
-            if (node.text) return node.text;
-            if (node.content && Array.isArray(node.content)) {
-              return node.content.map(extractText).join(' ');
-            }
-            return '';
-          };
-          previewText = extractText(note.blocks);
-        } else if (note.content) {
-          previewText = note.content;
-        }
-        return previewText ? (
-          <p className="text-sm text-slate-600 mt-3 whitespace-pre-wrap break-words">{truncate(previewText, 240)}</p>
-        ) : (
-          <p className="text-sm text-slate-400 mt-3 italic">No content</p>
-        );
-      })()}
+      {previewText ? (
+        <p className="text-sm text-slate-600 mt-3 whitespace-pre-wrap break-words">{truncate(previewText, 240)}</p>
+      ) : (
+        <p className="text-sm text-slate-400 mt-3 italic">No content</p>
+      )}
 
       <div className="mt-4 flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
@@ -153,6 +168,15 @@ function NoteCard({ note, projects = [], onView, onEdit, onDelete, onToggleFavor
       </div>
     </div>
   );
+});
+
+async function fetchFullNoteIfNeeded(note) {
+  if (!note?._id) return note;
+  if (note.blocks && typeof note.blocks === 'object' && note.blocks.type === 'doc') {
+    return note;
+  }
+  const { data } = await notesApi.get(note._id);
+  return data;
 }
 
 export default function Notes() {
@@ -162,11 +186,11 @@ export default function Notes() {
   const [stats, setStats] = useState(null);
   const [notes, setNotes] = useState([]);
   const [managedCategories, setManagedCategories] = useState([]);
-  const [projects, setProjects] = useState([]);
+  const { allProjects: projects, allProjectsLoaded, fetchAllProjects } = useProjects();
 
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [mode, setMode] = useState('gallery'); // gallery | favorites | archived
+  const [mode, setMode] = useState('gallery');
   const [search, setSearch] = useState('');
 
   const [formOpen, setFormOpen] = useState(false);
@@ -175,7 +199,12 @@ export default function Notes() {
   const [editingCategory, setEditingCategory] = useState(null);
   const [detailViewOpen, setDetailViewOpen] = useState(false);
   const [viewingNote, setViewingNote] = useState(null);
+  const [noteLoading, setNoteLoading] = useState(false);
   const [confirmModal, setConfirmModal] = useState(null);
+
+  const initialLoadDoneRef = useRef(false);
+  const skipFilterEffectRef = useRef(true);
+  const skipSearchDebounceRef = useRef(true);
 
   const categories = useMemo(() => buildCategoryList(managedCategories, stats), [managedCategories, stats]);
 
@@ -193,17 +222,8 @@ export default function Notes() {
     }
   }, []);
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const { data } = await projectsApi.list({ includeArchived: true });
-      setProjects(data || []);
-    } catch (err) {
-      console.error('Failed to load projects:', err);
-    }
-  }, []);
-
   const loadNotes = useCallback(async (opts = {}) => {
-    const effectiveSearch = (opts.search ?? '').trim();
+    const effectiveSearch = (opts.search ?? search).trim();
     const params = {
       archived: mode === 'archived' ? 'true' : 'false',
       favoriteOnly: mode === 'favorites' ? 'true' : 'false',
@@ -213,16 +233,29 @@ export default function Notes() {
     };
     const res = await notesApi.list(params);
     setNotes(res.data || []);
-  }, [mode, selectedCategory, selectedProjectId]);
+  }, [mode, selectedCategory, selectedProjectId, search]);
 
-  // Initial load only - show loader on first mount
+  const refreshNotesData = useCallback(() => {
+    return Promise.all([loadStats(), loadNotes()]).catch((err) => {
+      console.error('Failed to refresh notes:', err);
+    });
+  }, [loadStats, loadNotes]);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        await Promise.all([loadStats(), loadCategories(), loadProjects(), loadNotes({ search })]);
+        await Promise.all([
+          loadStats(),
+          loadCategories(),
+          allProjectsLoaded ? Promise.resolve() : fetchAllProjects(),
+          loadNotes({ search }),
+        ]);
+        if (!cancelled) {
+          initialLoadDoneRef.current = true;
+        }
       } catch (err) {
         if (!cancelled) {
           console.error(err);
@@ -237,59 +270,92 @@ export default function Notes() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run on mount
+  }, []);
 
-  // Reload notes when mode/category/projectId changes (without showing loader)
-  // Note: search changes are handled by the debounced useEffect below
   useEffect(() => {
+    if (skipFilterEffectRef.current) {
+      skipFilterEffectRef.current = false;
+      return;
+    }
+    if (!initialLoadDoneRef.current) return;
     loadNotes({ search });
-  }, [mode, selectedCategory, selectedProjectId, loadNotes]);
+  }, [mode, selectedCategory, selectedProjectId, loadNotes, search]);
 
-  // Debounced search refresh (prevents request on every keystroke)
   useEffect(() => {
+    if (skipSearchDebounceRef.current) {
+      skipSearchDebounceRef.current = false;
+      return;
+    }
+    if (!initialLoadDoneRef.current) return;
     const t = setTimeout(() => {
       loadNotes({ search });
     }, 300);
     return () => clearTimeout(t);
   }, [search, loadNotes]);
 
-  function openNewNote() {
+  const openNewNote = useCallback(() => {
     const categoryPrefill =
       selectedCategory && selectedCategory !== 'All' ? selectedCategory : 'Uncategorized';
-    setEditingNote({ title: '', content: '', category: categoryPrefill, isFavorite: false, tags: [] });
+    setEditingNote({ title: '', blocks: EMPTY_NOTE_DOC, category: categoryPrefill, isFavorite: false, tags: [] });
     setFormOpen(true);
-  }
+  }, [selectedCategory]);
 
-  function openDetailView(note) {
-    setViewingNote(note);
+  const openDetailView = useCallback(async (note) => {
+    setNoteLoading(true);
     setDetailViewOpen(true);
-  }
+    try {
+      const full = await fetchFullNoteIfNeeded(note);
+      setViewingNote(full);
+    } catch (err) {
+      console.error('Failed to load note:', err);
+      setError('Failed to load note.');
+      setDetailViewOpen(false);
+    } finally {
+      setNoteLoading(false);
+    }
+  }, []);
 
-  function closeDetailView() {
+  const closeDetailView = useCallback(() => {
     setDetailViewOpen(false);
     setViewingNote(null);
-  }
+  }, []);
 
-  function openEditNote(note) {
-    setEditingNote(note);
+  const openEditNote = useCallback(async (note) => {
+    closeDetailView();
+    setNoteLoading(true);
     setFormOpen(true);
-    closeDetailView(); // Close detail view when opening edit
-  }
+    try {
+      const full = await fetchFullNoteIfNeeded(note);
+      setEditingNote(full);
+    } catch (err) {
+      console.error('Failed to load note:', err);
+      setError('Failed to load note for editing.');
+      setFormOpen(false);
+    } finally {
+      setNoteLoading(false);
+    }
+  }, [closeDetailView]);
 
-  function closeForm() {
+  const closeForm = useCallback(() => {
     setFormOpen(false);
     setEditingNote(null);
-  }
+  }, []);
 
-  async function handleSave(payload) {
+  const handleSave = useCallback(async (payload) => {
+    const noteId = editingNote?._id;
     try {
-      if (editingNote?._id) {
-        await notesApi.update(editingNote._id, payload);
+      if (noteId) {
+        const { data: saved } = await notesApi.update(noteId, payload);
+        setNotes((prev) => prev.map((n) => (n._id === saved._id ? saved : n)));
+        if (viewingNote?._id === saved._id) {
+          setViewingNote(saved);
+        }
       } else {
-        await notesApi.create(payload);
+        const { data: saved } = await notesApi.create(payload);
+        setNotes((prev) => [saved, ...prev]);
       }
       closeForm();
-      await Promise.all([loadStats(), loadNotes({ search })]);
+      void refreshNotesData();
     } catch (err) {
       console.error(err);
       const msg =
@@ -297,10 +363,11 @@ export default function Notes() {
         err.response?.data?.message ||
         'Failed to save note. Please try again.';
       setError(msg);
+      throw err;
     }
-  }
+  }, [editingNote, viewingNote, closeForm, refreshNotesData]);
 
-  function handleDelete(note) {
+  const handleDelete = useCallback((note) => {
     setConfirmModal({
       open: true,
       title: 'Delete Note',
@@ -309,22 +376,24 @@ export default function Notes() {
       cancelText: 'Cancel',
       variant: 'danger',
       onConfirm: async () => {
+        const deletedId = note._id;
+        setConfirmModal(null);
+        closeDetailView();
+        setNotes((prev) => prev.filter((n) => n._id !== deletedId));
         try {
-          await notesApi.delete(note._id);
-          await Promise.all([loadStats(), loadNotes({ search })]);
-          closeDetailView(); // Close detail view if open
-          setConfirmModal(null);
+          await notesApi.delete(deletedId);
+          void refreshNotesData();
         } catch (err) {
           console.error(err);
           setError('Failed to delete note. Please try again.');
-          setConfirmModal(null);
+          void loadNotes();
         }
       },
       onCancel: () => setConfirmModal(null),
     });
-  }
+  }, [closeDetailView, refreshNotesData, loadNotes]);
 
-  async function handleToggleFavorite(note) {
+  const handleToggleFavorite = useCallback(async (note) => {
     try {
       const nextFav = !note.isFavorite;
       await notesApi.toggleFavorite(note._id);
@@ -341,9 +410,9 @@ export default function Notes() {
       console.error(err);
       setError('Failed to update favorite.');
     }
-  }
+  }, [viewingNote, mode, loadStats, loadNotes, search]);
 
-  async function handleToggleArchive(note) {
+  const handleToggleArchive = useCallback(async (note) => {
     try {
       const wasArchived = note.archived;
       await notesApi.toggleArchive(note._id);
@@ -364,7 +433,7 @@ export default function Notes() {
       console.error(err);
       setError('Failed to update archive.');
     }
-  }
+  }, [viewingNote, mode, loadStats, loadNotes, search]);
 
   function openNewCategory() {
     setEditingCategory(null);
@@ -629,17 +698,23 @@ export default function Notes() {
         </section>
       </div>
 
-      <Suspense fallback={null}>
-        <NoteForm
-          open={formOpen}
-          initialNote={editingNote}
-          categories={categories}
-          managedCategories={managedCategories}
-          projects={projects}
-          onClose={closeForm}
-          onSubmit={handleSave}
-        />
+      {noteLoading && <NoteFormModalShell open onClose={() => {}} />}
 
+      {formOpen && (
+        <Suspense fallback={<NoteFormModalShell open onClose={closeForm} />}>
+          <NoteForm
+            open={formOpen}
+            initialNote={editingNote}
+            categories={categories}
+            managedCategories={managedCategories}
+            projects={projects}
+            onClose={closeForm}
+            onSubmit={handleSave}
+          />
+        </Suspense>
+      )}
+
+      <Suspense fallback={null}>
         <NoteCategoryForm
           open={categoryFormOpen}
           category={editingCategory}
@@ -649,7 +724,7 @@ export default function Notes() {
         />
 
         <NoteDetailView
-          open={detailViewOpen}
+          open={detailViewOpen && !noteLoading}
           note={viewingNote}
           managedCategories={managedCategories}
           onClose={closeDetailView}
@@ -677,4 +752,3 @@ export default function Notes() {
     </div>
   );
 }
-

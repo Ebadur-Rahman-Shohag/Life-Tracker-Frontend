@@ -1,13 +1,16 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
-import { projects as projectsApi, tasks as tasksApi, notes as notesApi, references as referencesApi } from '../api/client';
+import { projects as projectsApi, tasks as tasksApi, notes as notesApi, references as referencesApi, invalidateProjectsCache } from '../api/client';
 import { buildCategoryList, fetchNoteFormCatalog } from '../lib/noteFormResources';
+import { EMPTY_NOTE_DOC } from '../lib/noteTipTap';
 import Loader from '../components/Loader';
 import ProjectPageModals from '../components/ProjectPageModals';
 import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
-import { sortTasks } from '../lib/taskUtils';
+import { sortTasks, reorderListToPosition } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
+import ProjectTaskList from '../components/ProjectTaskList';
+import { useProjects } from '../context/ProjectsContext';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -48,6 +51,7 @@ export default function ProjectDetail() {
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
   const [newTaskNotes, setNewTaskNotes] = useState('');
   const [adding, setAdding] = useState(false);
+  const [addingTask, setAddingTask] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [descriptionInput, setDescriptionInput] = useState('');
@@ -66,6 +70,8 @@ export default function ProjectDetail() {
   const [includeSubProjectsNotes, setIncludeSubProjectsNotes] = useState(false);
   const [projectReferences, setProjectReferences] = useState([]);
   const [loadingProjectReferences, setLoadingProjectReferences] = useState(false);
+  const [projectReferencesError, setProjectReferencesError] = useState(null);
+  const [togglingFavoriteRefId, setTogglingFavoriteRefId] = useState(null);
   const [includeSubProjectsReferences, setIncludeSubProjectsReferences] = useState(false);
   const [referenceModalOpen, setReferenceModalOpen] = useState(false);
   const [editingReference, setEditingReference] = useState(null);
@@ -138,7 +144,7 @@ export default function ProjectDetail() {
     setNoteForForm({
       projectIds: [projectId],
       title: '',
-      content: '',
+      blocks: EMPTY_NOTE_DOC,
       category: 'Uncategorized',
       isFavorite: false,
       tags: [],
@@ -151,12 +157,24 @@ export default function ProjectDetail() {
   }, [isNew, projectId, ensureNoteFormCatalog]);
 
   const openEditNote = useCallback(
-    (note) => {
+    async (note) => {
       setNoteFormError(null);
-      setNoteForForm(note);
-      setNoteFormOpen(true);
       setDetailViewOpen(false);
       setViewingNote(null);
+      setNoteFormOpen(true);
+      try {
+        let full = note;
+        if (!note.blocks || note.blocks.type !== 'doc') {
+          const { data } = await notesApi.get(note._id);
+          full = data;
+        }
+        setNoteForForm(full);
+      } catch (err) {
+        console.error('Failed to load note:', err);
+        setNoteFormError('Failed to load note. Please try again.');
+        setNoteFormOpen(false);
+        return;
+      }
       ensureNoteFormCatalog().catch((err) => {
         console.error('Failed to load note form data:', err);
         setNoteFormError('Failed to load categories. Please try again.');
@@ -164,6 +182,20 @@ export default function ProjectDetail() {
     },
     [ensureNoteFormCatalog]
   );
+
+  const openProjectNoteDetail = useCallback(async (note) => {
+    try {
+      let full = note;
+      if (!note.blocks || note.blocks.type !== 'doc') {
+        const { data } = await notesApi.get(note._id);
+        full = data;
+      }
+      setViewingNote(full);
+      setDetailViewOpen(true);
+    } catch (err) {
+      console.error('Failed to load note:', err);
+    }
+  }, []);
 
   const closeDetailView = useCallback(() => {
     setDetailViewOpen(false);
@@ -214,6 +246,29 @@ export default function ProjectDetail() {
     setEditingReference(null);
   }, []);
 
+  const handleDeleteReference = useCallback((ref) => {
+    setConfirmModal({
+      open: true,
+      title: 'Delete reference?',
+      message: `Remove "${ref.title}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await referencesApi.delete(ref._id);
+          setProjectReferences((prev) => prev.filter((r) => r._id !== ref._id));
+          setConfirmModal(null);
+        } catch (err) {
+          console.error('Failed to delete reference:', err);
+          setConfirmModal(null);
+          setProjectReferencesError('Failed to delete reference. Please try again.');
+        }
+      },
+      onCancel: () => setConfirmModal(null),
+    });
+  }, []);
+
   const handleDeleteNote = useCallback((note) => {
     setConfirmModal({
       open: true,
@@ -239,26 +294,36 @@ export default function ProjectDetail() {
   }, []);
 
   const handleToggleFavoriteNote = useCallback(async (note) => {
+    const previous = note.isFavorite;
+    setProjectNotes((prev) =>
+      prev.map((n) => (n._id === note._id ? { ...n, isFavorite: !n.isFavorite } : n))
+    );
+    setViewingNote((current) =>
+      current?._id === note._id ? { ...current, isFavorite: !current.isFavorite } : current
+    );
     try {
       await notesApi.toggleFavorite(note._id);
+    } catch (err) {
       setProjectNotes((prev) =>
-        prev.map((n) => (n._id === note._id ? { ...n, isFavorite: !n.isFavorite } : n))
+        prev.map((n) => (n._id === note._id ? { ...n, isFavorite: previous } : n))
       );
       setViewingNote((current) =>
-        current?._id === note._id ? { ...current, isFavorite: !current.isFavorite } : current
+        current?._id === note._id ? { ...current, isFavorite: previous } : current
       );
-    } catch (err) {
       console.error('Failed to toggle favorite:', err);
     }
   }, []);
 
   const handleToggleArchiveNote = useCallback(async (note) => {
+    setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
+    setDetailViewOpen(false);
+    setViewingNote(null);
     try {
       await notesApi.toggleArchive(note._id);
-      setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
-      setDetailViewOpen(false);
-      setViewingNote(null);
     } catch (err) {
+      setProjectNotes((prev) => [...prev, note]);
+      setViewingNote(note);
+      setDetailViewOpen(true);
       console.error('Failed to toggle archive:', err);
     }
   }, []);
@@ -309,13 +374,9 @@ export default function ProjectDetail() {
     async function fetchProject() {
       
       try {
-        const [projRes, tasksRes] = await Promise.all([
-          projectsApi.get(projectId),
-          tasksApi.list({ projectId }),
-        ]);
+        const proj = await projectsApi.getCached(projectId);
         
         if (cancelled) return;
-        const proj = projRes.data;
         if (!proj) {
           navigate('/tasks?tab=projects');
           return;
@@ -323,7 +384,7 @@ export default function ProjectDetail() {
         setProject(proj);
         setNameInput(proj.name);
         setDescriptionInput(proj.description || '');
-        setProjectTasks(tasksRes.data);
+        setProjectTasks(proj.tasks || []);
         
         // Merge new sub-project with fetched data (same pattern as TaskManager)
         let subProjectsList = proj.subProjects || [];
@@ -387,6 +448,7 @@ export default function ProjectDetail() {
     async function fetchReferences() {
       try {
         setLoadingProjectReferences(true);
+        setProjectReferencesError(null);
         const res = await projectsApi.getReferences(projectId, {
           includeSubProjects: includeSubProjectsReferences,
         });
@@ -396,6 +458,7 @@ export default function ProjectDetail() {
       } catch (err) {
         if (!cancelled) {
           console.error('Failed to load references:', err);
+          setProjectReferencesError('Failed to load references. Please try again.');
           setProjectReferences([]);
         }
       } finally {
@@ -415,36 +478,34 @@ export default function ProjectDetail() {
     if (isNew || !projectId) return;
     try {
       setLoadingProjectReferences(true);
+      setProjectReferencesError(null);
       const res = await projectsApi.getReferences(projectId, {
         includeSubProjects: includeSubProjectsReferences,
       });
       setProjectReferences(res.data || []);
     } catch (err) {
       console.error('Failed to load references:', err);
+      setProjectReferencesError('Failed to load references. Please try again.');
+      setProjectReferences([]);
     } finally {
       setLoadingProjectReferences(false);
     }
   }, [projectId, isNew, includeSubProjectsReferences]);
 
+  const { allProjects, allProjectsLoaded, fetchAllProjects } = useProjects();
+
   useEffect(() => {
     if (isNew) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await projectsApi.list({ includeArchived: true });
-        if (!cancelled) {
-          setReferenceProjects(Array.isArray(data) ? data : []);
-        }
-      } catch {
-        if (!cancelled) {
-          setReferenceProjects([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isNew]);
+    if (!allProjectsLoaded) {
+      fetchAllProjects();
+    }
+  }, [isNew, allProjectsLoaded, fetchAllProjects]);
+
+  useEffect(() => {
+    if (!isNew) {
+      setReferenceProjects(allProjects);
+    }
+  }, [isNew, allProjects]);
 
   async function handleCreateProject(e) {
     e.preventDefault();
@@ -526,57 +587,100 @@ export default function ProjectDetail() {
     });
   }
 
-  async function moveSubProject(index, direction) {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= subProjects.length) return;
-
-    const newSubProjects = [...subProjects];
-    [newSubProjects[index], newSubProjects[targetIndex]] = [newSubProjects[targetIndex], newSubProjects[index]];
-
+  async function persistSubProjectReorder(reordered) {
+    const snapshot = subProjects;
+    setSubProjects(reordered);
     try {
-      await projectsApi.reorder(newSubProjects.map((sp) => sp._id));
-      setSubProjects(newSubProjects);
+      await projectsApi.reorder(reordered.map((sp) => sp._id));
     } catch (err) {
+      setSubProjects(snapshot);
       console.error(err);
     }
+  }
+
+  function moveSubProject(subProjectId, direction) {
+    const index = subProjects.findIndex((sp) => sp._id === subProjectId);
+    if (index < 0) return;
+    const reordered = reorderListToPosition(subProjects, subProjectId, index + 1 + direction);
+    if (reordered) void persistSubProjectReorder(reordered);
+  }
+
+  function moveSubProjectToPosition(subProjectId, position) {
+    const reordered = reorderListToPosition(subProjects, subProjectId, position);
+    if (reordered) void persistSubProjectReorder(reordered);
   }
 
   async function handleAddTask(e) {
     e.preventDefault();
     const title = newTaskTitle.trim();
     if (!title || !project?._id) return;
-    setAdding(true);
+
+    const savedPriority = newTaskPriority;
+    const savedDueDate = newTaskDueDate;
+    const savedNotes = newTaskNotes.trim();
+    setNewTaskTitle('');
+    setNewTaskDueDate('');
+    setNewTaskNotes('');
+
+    const tempId = `temp-${Date.now()}`;
+    const optimisticTask = {
+      _id: tempId,
+      title,
+      projectId: project._id,
+      priority: savedPriority,
+      completed: false,
+      dueDate: savedDueDate ? new Date(savedDueDate).toISOString() : undefined,
+      notes: savedNotes || undefined,
+      order: projectTasks.length,
+    };
+    setProjectTasks((prev) => [...prev, optimisticTask]);
+    setAddingTask(true);
+
     try {
-      const payload = { title, projectId: project._id, priority: newTaskPriority };
-      if (newTaskDueDate) payload.dueDate = new Date(newTaskDueDate).toISOString();
-      if (newTaskNotes.trim()) payload.notes = newTaskNotes.trim();
+      const payload = { title, projectId: project._id, priority: savedPriority };
+      if (savedDueDate) payload.dueDate = new Date(savedDueDate).toISOString();
+      if (savedNotes) payload.notes = savedNotes;
       const { data } = await tasksApi.create(payload);
-      setProjectTasks((prev) => [...prev, data]);
-      setNewTaskTitle('');
-      setNewTaskDueDate('');
-      setNewTaskNotes('');
+      setProjectTasks((prev) => prev.map((t) => (t._id === tempId ? data : t)));
+      invalidateProjectsCache();
     } catch (err) {
+      setProjectTasks((prev) => prev.filter((t) => t._id !== tempId));
+      setNewTaskTitle(title);
+      setNewTaskDueDate(savedDueDate);
+      setNewTaskNotes(savedNotes);
       console.error(err);
     } finally {
-      setAdding(false);
+      setAddingTask(false);
     }
   }
 
   const buildTogglePayload = useCallback((_task, completed) => ({ completed }), []);
-  const toggleTask = useOptimisticTaskToggle({
+  const toggleTaskRaw = useOptimisticTaskToggle({
     setTasks: setProjectTasks,
     buildUpdatePayload: buildTogglePayload,
   });
+  const toggleTask = useCallback(
+    (task) => {
+      toggleTaskRaw(task);
+      invalidateProjectsCache();
+    },
+    [toggleTaskRaw]
+  );
   const { moveTask, moveTaskToPosition } = useOptimisticTaskReorder({
     setTasks: setProjectTasks,
     sortTasks,
   });
 
+  const sortedProjectTasks = useMemo(() => sortTasks(projectTasks), [projectTasks]);
+
   async function deleteTask(task) {
+    const snapshot = projectTasks;
+    setProjectTasks((prev) => prev.filter((t) => t._id !== task._id));
     try {
       await tasksApi.delete(task._id);
-      setProjectTasks((prev) => prev.filter((t) => t._id !== task._id));
+      invalidateProjectsCache();
     } catch (err) {
+      setProjectTasks(snapshot);
       console.error(err);
     }
   }
@@ -641,7 +745,7 @@ export default function ProjectDetail() {
     }
     
     return (
-      <div className="max-w-xl mx-auto">
+      <div className="w-full max-w-7xl mx-auto">
         <Link
           to={backLink}
           replace={!!parentIdFromUrl}
@@ -670,7 +774,7 @@ export default function ProjectDetail() {
             Creating sub-project under: <span className="font-medium text-slate-700">{parentProject.name}</span>
           </p>
         )}
-        <form onSubmit={handleCreateProject} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+        <form onSubmit={handleCreateProject} className="max-w-xl bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
             <input
@@ -722,7 +826,7 @@ export default function ProjectDetail() {
   const backLabel = parentChain.length > 0 ? `← Back to ${parentChain[parentChain.length - 1].name}` : '← Back to Task Manager';
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="w-full max-w-7xl mx-auto">
       {noteFormError && (
         <div
           className="fixed top-4 left-1/2 z-[200] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800 shadow-lg flex items-start justify-between gap-2"
@@ -740,13 +844,40 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <Link
-        to={backLink}
-        replace={parentChain.length > 0}
-        className="text-sm text-slate-600 hover:text-emerald-600 mb-4 inline-block"
-      >
-        {backLabel}
-      </Link>
+      <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+        <Link
+          to={backLink}
+          replace={parentChain.length > 0}
+          className="text-sm text-slate-600 hover:text-emerald-600 shrink-0"
+        >
+          {backLabel}
+        </Link>
+        {!editingName && (
+          <div className="flex gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setEditingName(true)}
+              className="text-sm text-slate-500 hover:text-emerald-600"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={toggleArchive}
+              className="text-sm text-slate-500 hover:text-amber-600"
+            >
+              {project.archived ? 'Unarchive' : 'Archive'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteProject}
+              className="text-sm text-slate-500 hover:text-red-600"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Breadcrumbs */}
       {parentChain.length > 0 && (
@@ -789,36 +920,11 @@ export default function ProjectDetail() {
             </button>
           </div>
         ) : (
-          <div className="flex items-start justify-between gap-2 flex-wrap">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-800">{project.name}</h1>
-              {project.description && (
-                <p className="text-slate-500 mt-1">{project.description}</p>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setEditingName(true)}
-                className="text-sm text-slate-500 hover:text-emerald-600"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={toggleArchive}
-                className="text-sm text-slate-500 hover:text-amber-600"
-              >
-                {project.archived ? 'Unarchive' : 'Archive'}
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteProject}
-                className="text-sm text-slate-500 hover:text-red-600"
-              >
-                Delete
-              </button>
-            </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">{project.name}</h1>
+            {project.description && (
+              <p className="text-slate-500 mt-1">{project.description}</p>
+            )}
           </div>
         )}
       </div>
@@ -891,7 +997,7 @@ export default function ProjectDetail() {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        moveSubProject(index, -1);
+                        moveSubProject(sp._id, -1);
                       }}
                       disabled={index === 0}
                       className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
@@ -904,7 +1010,7 @@ export default function ProjectDetail() {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        moveSubProject(index, 1);
+                        moveSubProject(sp._id, 1);
                       }}
                       disabled={index === subProjects.length - 1}
                       className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
@@ -912,6 +1018,11 @@ export default function ProjectDetail() {
                     >
                       ↓
                     </button>
+                    <TaskPositionInput
+                      position={index + 1}
+                      max={subProjects.length}
+                      onCommit={(pos) => moveSubProjectToPosition(sp._id, pos)}
+                    />
                   </div>
                 </div>
               );
@@ -958,173 +1069,41 @@ export default function ProjectDetail() {
         />
         <button
           type="submit"
-          disabled={adding || !newTaskTitle.trim()}
-          className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
+          disabled={addingTask || !newTaskTitle.trim()}
+          className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
         >
-          Add task
+          {addingTask ? (
+            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden>
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+          ) : (
+            'Add task'
+          )}
         </button>
       </form>
 
-      <ul className="space-y-2">
-        {sortTasks(projectTasks).map((task, sortIndex, sorted) => {
-            const due = formatDueDate(task.dueDate);
-            const isExpanded = expandedTaskId === task._id;
-            const isEditing = editingTaskId === task._id;
-
-            if (isEditing) {
-              return (
-                <li
-                  key={task._id}
-                  className="bg-white border border-emerald-300 rounded-lg overflow-hidden shadow-sm"
-                >
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      saveEditTask(task);
-                    }}
-                    className="p-4 space-y-3"
-                  >
-                    <input
-                      type="text"
-                      value={editTaskTitle}
-                      onChange={(e) => setEditTaskTitle(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800"
-                      placeholder="Task title"
-                      autoFocus
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <select
-                        value={editTaskPriority}
-                        onChange={(e) => setEditTaskPriority(e.target.value)}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-slate-800 text-sm"
-                      >
-                        <option value="high">High</option>
-                        <option value="medium">Medium</option>
-                        <option value="low">Low</option>
-                      </select>
-                      <input
-                        type="date"
-                        value={editTaskDueDate}
-                        onChange={(e) => setEditTaskDueDate(e.target.value)}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-slate-800 text-sm"
-                      />
-                      <input
-                        type="text"
-                        value={editTaskNotes}
-                        onChange={(e) => setEditTaskNotes(e.target.value)}
-                        placeholder="Notes (optional)"
-                        className="flex-1 min-w-[120px] rounded-lg border border-slate-300 px-3 py-2 text-slate-800 text-sm"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="submit"
-                        disabled={!editTaskTitle.trim()}
-                        className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={cancelEditTask}
-                        className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                </li>
-              );
-            }
-
-            return (
-              <li
-                key={task._id}
-                className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm"
-              >
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <button
-                    type="button"
-                    onClick={() => toggleTask(task)}
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
-                      }`}
-                  >
-                    {task.completed && '✓'}
-                  </button>
-                  <span className={`flex-1 ${task.completed ? 'text-slate-500 line-through' : 'text-slate-800'}`}>
-                    {task.title}
-                  </span>
-                  {due && (
-                    <span className={`text-xs ${due.className}`}>{due.label}</span>
-                  )}
-                  <span className={`text-xs px-2 py-0.5 rounded shrink-0 ${PRIORITY_STYLES[task.priority] || PRIORITY_STYLES.medium}`}>
-                    {PRIORITY_LABELS[task.priority] || 'Medium'}
-                  </span>
-                  {task.notes && (
-                    <button
-                      type="button"
-                      onClick={() => setExpandedTaskId(isExpanded ? null : task._id)}
-                      className="text-slate-400 hover:text-slate-600 text-xs"
-                      title="Notes"
-                    >
-                      {isExpanded ? '▼' : '▶'} Note
-                    </button>
-                  )}
-                  <div className="flex items-center gap-0">
-                    <button
-                      type="button"
-                      onClick={() => moveTask(task, 'up')}
-                      disabled={sortIndex === 0}
-                      className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
-                      title="Move up"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveTask(task, 'down')}
-                      disabled={sortIndex === sorted.length - 1}
-                      className="text-slate-400 hover:text-slate-600 text-sm px-1 disabled:opacity-30"
-                      title="Move down"
-                    >
-                      ↓
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => startEditTask(task)}
-                    className="text-slate-400 hover:text-emerald-600 text-sm"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteTask(task)}
-                    className="text-slate-400 hover:text-red-600 text-sm"
-                  >
-                    Delete
-                  </button>
-                  <TaskPositionInput
-                    position={sortIndex + 1}
-                    max={sorted.length}
-                    onCommit={(pos) => moveTaskToPosition(task, pos)}
-                  />
-                </div>
-                {isExpanded && task.notes && (
-                  <div className="px-4 pb-3 pt-0 pl-12 text-sm text-slate-600 border-t border-slate-100">
-                    {task.notes}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-      </ul>
-      {projectTasks.length === 0 && (
-        <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
-          <p className="text-slate-600 mb-2">No tasks yet.</p>
-          <p className="text-sm text-slate-500">Add your first task above.</p>
-        </div>
-      )}
+      <ProjectTaskList
+        tasks={sortedProjectTasks}
+        expandedTaskId={expandedTaskId}
+        onExpandedTaskIdChange={setExpandedTaskId}
+        editingTaskId={editingTaskId}
+        editTaskTitle={editTaskTitle}
+        onEditTaskTitleChange={setEditTaskTitle}
+        editTaskPriority={editTaskPriority}
+        onEditTaskPriorityChange={setEditTaskPriority}
+        editTaskDueDate={editTaskDueDate}
+        onEditTaskDueDateChange={setEditTaskDueDate}
+        editTaskNotes={editTaskNotes}
+        onEditTaskNotesChange={setEditTaskNotes}
+        onToggleTask={toggleTask}
+        onMoveTask={moveTask}
+        onMoveTaskToPosition={moveTaskToPosition}
+        onDeleteTask={deleteTask}
+        onStartEditTask={startEditTask}
+        onCancelEditTask={cancelEditTask}
+        onSaveEditTask={saveEditTask}
+      />
 
       {/* Notes Section */}
       <div className="mt-8">
@@ -1173,26 +1152,29 @@ export default function ProjectDetail() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {projectNotes.map((note) => (
+            {projectNotes.map((note) => {
+              const preview = (note.searchText || note.content || '').trim();
+              return (
               <div
                 key={note._id}
                 className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => {
-                  setViewingNote(note);
-                  setDetailViewOpen(true);
-                }}
+                onClick={() => openProjectNoteDetail(note)}
               >
                 <h3 className="font-semibold text-slate-800 truncate mb-1">{note.title}</h3>
                 <p className="text-xs text-slate-500 mb-2">
                   {new Date(note.updatedAt || note.createdAt).toLocaleDateString()}
                 </p>
+                {preview && (
+                  <p className="text-sm text-slate-600 mb-2 line-clamp-2">{preview}</p>
+                )}
                 {note.category && (
                   <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">
                     {note.category}
                   </span>
                 )}
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
       </div>
@@ -1229,6 +1211,17 @@ export default function ProjectDetail() {
         {loadingProjectReferences ? (
           <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
             <p className="text-slate-500">Loading references…</p>
+          </div>
+        ) : projectReferencesError ? (
+          <div className="text-center py-8 bg-red-50 rounded-xl border border-red-200">
+            <p className="text-red-800 mb-3">{projectReferencesError}</p>
+            <button
+              type="button"
+              onClick={() => void refetchProjectReferences()}
+              className="px-4 py-2 rounded-lg border border-red-300 text-red-800 hover:bg-red-100 text-sm font-medium"
+            >
+              Retry
+            </button>
           </div>
         ) : projectReferences.length === 0 ? (
           <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
@@ -1267,19 +1260,31 @@ export default function ProjectDetail() {
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
+                    disabled={togglingFavoriteRefId === ref._id}
                     onClick={async () => {
+                      if (togglingFavoriteRefId === ref._id) return;
+                      const previous = ref.isFavorite;
+                      setTogglingFavoriteRefId(ref._id);
+                      setProjectReferences((prev) =>
+                        prev.map((r) =>
+                          r._id === ref._id ? { ...r, isFavorite: !r.isFavorite } : r
+                        )
+                      );
                       try {
-                        await referencesApi.update(ref._id, { isFavorite: !ref.isFavorite });
+                        await referencesApi.update(ref._id, { isFavorite: !previous });
+                      } catch (e) {
                         setProjectReferences((prev) =>
                           prev.map((r) =>
-                            r._id === ref._id ? { ...r, isFavorite: !r.isFavorite } : r
+                            r._id === ref._id ? { ...r, isFavorite: previous } : r
                           )
                         );
-                      } catch (e) {
+                        setProjectReferencesError('Failed to update favorite.');
                         console.error(e);
+                      } finally {
+                        setTogglingFavoriteRefId(null);
                       }
                     }}
-                    className={`px-2 py-1 rounded-lg text-sm border ${
+                    className={`px-2 py-1 rounded-lg text-sm border disabled:opacity-50 ${
                       ref.isFavorite
                         ? 'bg-amber-50 border-amber-200 text-amber-700'
                         : 'bg-white border-slate-200 text-slate-500'
@@ -1295,6 +1300,13 @@ export default function ProjectDetail() {
                     className="text-sm text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded-lg hover:bg-emerald-50"
                   >
                     Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteReference(ref)}
+                    className="text-sm text-slate-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50"
+                  >
+                    Delete
                   </button>
                 </div>
               </li>
