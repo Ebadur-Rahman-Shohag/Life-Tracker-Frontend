@@ -193,7 +193,9 @@ export default function BudgetTracker() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await budgetApi.deleteTransaction(id);
           await Promise.all([loadSummary(), refreshTransactionData()]);
@@ -201,7 +203,7 @@ export default function BudgetTracker() {
         } catch (err) {
           console.error('Error deleting transaction:', err);
           setError('Error deleting transaction. Please try again.');
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -245,7 +247,9 @@ export default function BudgetTracker() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await budgetApi.deleteCategory(id);
           await loadCategories();
@@ -253,7 +257,7 @@ export default function BudgetTracker() {
         } catch (err) {
           console.error('Error deleting category:', err);
           setError('Error deleting category. Please try again.');
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -931,6 +935,7 @@ export default function BudgetTracker() {
           variant={confirmModal.variant}
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
+          confirmLoading={confirmModal.confirmLoading}
         />
       )}
         </>

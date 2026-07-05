@@ -1,57 +1,57 @@
-import { useCallback, useRef } from 'react';
-import { tasks as tasksApi } from '../api/client';
+import { useCallback } from 'react';
 
 /**
- * Hook for optimistic task completion toggles.
- *
- * @param {Object} config
- * @param {Function} config.setTasks - React state setter for the task array
- * @param {Function} config.buildUpdatePayload - (task, nextCompleted) => PUT body
- * @returns {Function} Toggle handler: (task) => void
+ * Optimistic task toggle — mirrors useOptimisticToggle for habits/prayers.
  */
-export function useOptimisticTaskToggle({ setTasks, buildUpdatePayload }) {
-  const versionsRef = useRef({});
-  const inFlightRef = useRef(new Set());
-
-  const toggleTask = useCallback(
+export function useOptimisticTaskToggle({
+  tasks,
+  setTasks,
+  apiToggle,
+  getToggleDate,
+  markTogglePending,
+  removeTogglePending,
+  debouncedRefresh,
+  onError = null,
+}) {
+  const handleToggle = useCallback(
     async (task) => {
-      if (inFlightRef.current.has(task._id)) return;
-
-      const previousCompleted = task.completed;
-      const nextCompleted = !previousCompleted;
+      const previousTasks = [...tasks];
       const taskId = task._id;
 
-      const version = (versionsRef.current[taskId] || 0) + 1;
-      versionsRef.current[taskId] = version;
-      inFlightRef.current.add(taskId);
+      markTogglePending(taskId);
 
       setTasks((prev) =>
-        prev.map((t) => (t._id === taskId ? { ...t, completed: nextCompleted } : t))
+        prev.map((t) =>
+          t._id === taskId ? { ...t, completed: !t.completed } : t
+        )
       );
 
       try {
-        const payload = buildUpdatePayload(task, nextCompleted);
-        const { data } = await tasksApi.update(taskId, payload);
-        if (versionsRef.current[taskId] === version) {
-          setTasks((prev) =>
-            prev.map((t) => (t._id === taskId ? { ...t, ...data } : t))
-          );
-        }
+        const dateStr = getToggleDate ? getToggleDate(task) : undefined;
+        await apiToggle(taskId, dateStr);
+
+        debouncedRefresh();
+
+        setTimeout(() => {
+          removeTogglePending(taskId);
+        }, 350);
       } catch (err) {
-        if (versionsRef.current[taskId] === version) {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t._id === taskId ? { ...t, completed: previousCompleted } : t
-            )
-          );
-        }
-        console.error(err);
-      } finally {
-        inFlightRef.current.delete(taskId);
+        removeTogglePending(taskId);
+        setTasks(previousTasks);
+        if (onError) onError(err);
       }
     },
-    [setTasks, buildUpdatePayload]
+    [
+      tasks,
+      setTasks,
+      apiToggle,
+      getToggleDate,
+      markTogglePending,
+      removeTogglePending,
+      debouncedRefresh,
+      onError,
+    ]
   );
 
-  return toggleTask;
+  return handleToggle;
 }

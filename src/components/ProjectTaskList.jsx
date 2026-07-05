@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import TaskPositionInput from './TaskPositionInput';
+import ButtonSpinner from './ButtonSpinner';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -40,6 +41,7 @@ function ProjectTaskList({
   onMoveTask,
   onMoveTaskToPosition,
   onDeleteTask,
+  deletingTaskId,
   onStartEditTask,
   onCancelEditTask,
   onSaveEditTask,
@@ -189,9 +191,17 @@ function ProjectTaskList({
               <button
                 type="button"
                 onClick={() => onDeleteTask(task)}
-                className="text-slate-400 hover:text-red-600 text-sm"
+                disabled={deletingTaskId === task._id}
+                className="text-slate-400 hover:text-red-600 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Delete
+                {deletingTaskId === task._id ? (
+                  <span className="inline-flex items-center gap-1">
+                    <ButtonSpinner />
+                    Deleting…
+                  </span>
+                ) : (
+                  'Delete'
+                )}
               </button>
               <TaskPositionInput
                 position={sortIndex + 1}

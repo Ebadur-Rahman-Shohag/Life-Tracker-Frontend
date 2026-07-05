@@ -91,7 +91,8 @@ export const tasks = {
     if (data?.projectId) invalidateProjectsCache();
     return client.post('/tasks', data);
   },
-  update: (id, data) => client.put(`/tasks/${id}`, data),
+  update: (id, data, config) => client.put(`/tasks/${id}`, data, config),
+  toggle: (id, date) => client.post(`/tasks/${id}/toggle`, date ? { date } : {}),
   delete: (id) => client.delete(`/tasks/${id}`),
   reorder: (taskIds) => client.put('/tasks/reorder', { taskIds }),
 };

@@ -375,18 +375,21 @@ export default function Notes() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
         const deletedId = note._id;
-        setConfirmModal(null);
-        closeDetailView();
-        setNotes((prev) => prev.filter((n) => n._id !== deletedId));
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await notesApi.delete(deletedId);
+          closeDetailView();
+          setNotes((prev) => prev.filter((n) => n._id !== deletedId));
           void refreshNotesData();
+          setConfirmModal(null);
         } catch (err) {
           console.error(err);
           setError('Failed to delete note. Please try again.');
           void loadNotes();
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -479,7 +482,9 @@ export default function Notes() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await notesApi.deleteCategory(id);
           await loadCategories();
@@ -488,7 +493,7 @@ export default function Notes() {
         } catch (err) {
           console.error(err);
           setError('Failed to delete category. Please try again.');
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -745,6 +750,7 @@ export default function Notes() {
           variant={confirmModal.variant}
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
+          confirmLoading={confirmModal.confirmLoading}
         />
       )}
         </>
