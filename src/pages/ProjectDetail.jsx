@@ -7,6 +7,7 @@ import Loader from '../components/Loader';
 import ProjectPageModals from '../components/ProjectPageModals';
 import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
+import { useTaskListData } from '../hooks/useTaskListData';
 import { sortTasks, reorderListToPosition } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
 import ProjectTaskList from '../components/ProjectTaskList';
@@ -63,6 +64,33 @@ export default function ProjectDetail() {
   const [editTaskDueDate, setEditTaskDueDate] = useState('');
   const [editTaskNotes, setEditTaskNotes] = useState('');
   const nameInputRef = useRef(null);
+
+  const fetchProjectTasks = useCallback(async () => {
+    const { data: proj } = await projectsApi.get(projectId);
+    if (!proj) throw new Error('Project not found');
+    setProject(proj);
+    setNameInput(proj.name);
+    setDescriptionInput(proj.description || '');
+    setSubProjects(proj.subProjects || []);
+    setParentChain(proj.parentChain || []);
+    return proj.tasks || [];
+  }, [projectId]);
+
+  const {
+    loadTasks,
+    debouncedRefresh,
+    markTogglePending,
+    removeTogglePending,
+  } = useTaskListData({
+    fetchTasks: fetchProjectTasks,
+    setTasks: setProjectTasks,
+  });
+
+  const debouncedRefreshWithProject = useCallback(() => {
+    debouncedRefresh();
+    invalidateProjectsCache();
+  }, [debouncedRefresh]);
+
   const [projectNotes, setProjectNotes] = useState([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [viewingNote, setViewingNote] = useState(null);
@@ -254,14 +282,16 @@ export default function ProjectDetail() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await referencesApi.delete(ref._id);
           setProjectReferences((prev) => prev.filter((r) => r._id !== ref._id));
           setConfirmModal(null);
         } catch (err) {
           console.error('Failed to delete reference:', err);
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
           setProjectReferencesError('Failed to delete reference. Please try again.');
         }
       },
@@ -277,7 +307,9 @@ export default function ProjectDetail() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await notesApi.delete(note._id);
           setProjectNotes((prev) => prev.filter((n) => n._id !== note._id));
@@ -286,7 +318,7 @@ export default function ProjectDetail() {
           setConfirmModal(null);
         } catch (err) {
           console.error('Failed to delete note:', err);
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -328,6 +360,7 @@ export default function ProjectDetail() {
     }
   }, []);
   const [confirmModal, setConfirmModal] = useState(null);
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
 
   // When projectId changes, show loading before paint so we do not render one frame of the previous
   // project (e.g. sub-project) while the URL already points at the parent — same <ProjectDetail> instance.
@@ -372,28 +405,18 @@ export default function ProjectDetail() {
     }
     
     async function fetchProject() {
-      
       try {
-        const proj = await projectsApi.getCached(projectId);
-        
+        await loadTasks(true);
         if (cancelled) return;
-        if (!proj) {
-          navigate('/tasks?tab=projects');
-          return;
+        if (newSubProject && newSubProject.parentId === projectId) {
+          setSubProjects((prev) => {
+            if (prev.some((sp) => sp._id === newSubProject._id)) return prev;
+            return [
+              ...prev,
+              { ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 },
+            ];
+          });
         }
-        setProject(proj);
-        setNameInput(proj.name);
-        setDescriptionInput(proj.description || '');
-        setProjectTasks(proj.tasks || []);
-        
-        // Merge new sub-project with fetched data (same pattern as TaskManager)
-        let subProjectsList = proj.subProjects || [];
-        if (newSubProject && newSubProject.parentId === projectId && !subProjectsList.some((sp) => sp._id === newSubProject._id)) {
-          // API response doesn't include the just-created sub-project yet, merge it in
-          subProjectsList = [...subProjectsList, { ...newSubProject, totalTasks: 0, completedTasks: 0, subProjectCount: 0 }];
-        }
-        setSubProjects(subProjectsList);
-        setParentChain(proj.parentChain || []);
       } catch {
         if (!cancelled) {
           // On error, at least show the new sub-project if we have one
@@ -410,7 +433,7 @@ export default function ProjectDetail() {
     }
     fetchProject();
     return () => { cancelled = true; };
-  }, [projectId, isNew, navigate, parentIdFromUrl, location.pathname, location.search]);
+  }, [projectId, isNew, navigate, parentIdFromUrl, location.pathname, location.search, loadTasks]);
 
   useEffect(() => {
     if (isNew && nameInputRef.current) nameInputRef.current.focus();
@@ -571,16 +594,17 @@ export default function ProjectDetail() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await projectsApi.delete(project._id);
-          // Navigate to parent project or task manager
           const destination = parentChain.length > 0 ? `/tasks/projects/${parentChain[parentChain.length - 1]._id}` : '/tasks?tab=projects';
           navigate(destination);
           setConfirmModal(null);
         } catch (err) {
           console.error(err);
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -618,6 +642,7 @@ export default function ProjectDetail() {
     const savedPriority = newTaskPriority;
     const savedDueDate = newTaskDueDate;
     const savedNotes = newTaskNotes.trim();
+    setAddingTask(true);
     setNewTaskTitle('');
     setNewTaskDueDate('');
     setNewTaskNotes('');
@@ -634,7 +659,6 @@ export default function ProjectDetail() {
       order: projectTasks.length,
     };
     setProjectTasks((prev) => [...prev, optimisticTask]);
-    setAddingTask(true);
 
     try {
       const payload = { title, projectId: project._id, priority: savedPriority };
@@ -654,18 +678,16 @@ export default function ProjectDetail() {
     }
   }
 
-  const buildTogglePayload = useCallback((_task, completed) => ({ completed }), []);
-  const toggleTaskRaw = useOptimisticTaskToggle({
+  const toggleTask = useOptimisticTaskToggle({
+    tasks: projectTasks,
     setTasks: setProjectTasks,
-    buildUpdatePayload: buildTogglePayload,
+    apiToggle: (taskId) => tasksApi.toggle(taskId),
+    getToggleDate: () => undefined,
+    markTogglePending,
+    removeTogglePending,
+    debouncedRefresh: debouncedRefreshWithProject,
+    onError: (err) => console.error('Failed to toggle task:', err),
   });
-  const toggleTask = useCallback(
-    (task) => {
-      toggleTaskRaw(task);
-      invalidateProjectsCache();
-    },
-    [toggleTaskRaw]
-  );
   const { moveTask, moveTaskToPosition } = useOptimisticTaskReorder({
     setTasks: setProjectTasks,
     sortTasks,
@@ -675,6 +697,7 @@ export default function ProjectDetail() {
 
   async function deleteTask(task) {
     const snapshot = projectTasks;
+    setDeletingTaskId(task._id);
     setProjectTasks((prev) => prev.filter((t) => t._id !== task._id));
     try {
       await tasksApi.delete(task._id);
@@ -682,6 +705,8 @@ export default function ProjectDetail() {
     } catch (err) {
       setProjectTasks(snapshot);
       console.error(err);
+    } finally {
+      setDeletingTaskId(null);
     }
   }
 
@@ -1070,16 +1095,9 @@ export default function ProjectDetail() {
         <button
           type="submit"
           disabled={addingTask || !newTaskTitle.trim()}
-          className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+          className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
         >
-          {addingTask ? (
-            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden>
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-            </svg>
-          ) : (
-            'Add task'
-          )}
+          Add task
         </button>
       </form>
 
@@ -1100,6 +1118,7 @@ export default function ProjectDetail() {
         onMoveTask={moveTask}
         onMoveTaskToPosition={moveTaskToPosition}
         onDeleteTask={deleteTask}
+        deletingTaskId={deletingTaskId}
         onStartEditTask={startEditTask}
         onCancelEditTask={cancelEditTask}
         onSaveEditTask={saveEditTask}
@@ -1157,10 +1176,31 @@ export default function ProjectDetail() {
               return (
               <div
                 key={note._id}
-                className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer flex flex-col"
                 onClick={() => openProjectNoteDetail(note)}
               >
-                <h3 className="font-semibold text-slate-800 truncate mb-1">{note.title}</h3>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <h3 className="font-semibold text-slate-800 truncate min-w-0">{note.title}</h3>
+                  <div
+                    className="flex items-center gap-2 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openEditNote(note)}
+                      className="text-sm text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded-lg hover:bg-emerald-50"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteNote(note)}
+                      className="text-sm text-slate-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
                 <p className="text-xs text-slate-500 mb-2">
                   {new Date(note.updatedAt || note.createdAt).toLocaleDateString()}
                 </p>

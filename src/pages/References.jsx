@@ -45,6 +45,7 @@ export default function References() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmDeleteLoading, setConfirmDeleteLoading] = useState(false);
 
   const loadSeqRef = useRef(0);
   const isFirstLoadRef = useRef(true);
@@ -170,8 +171,9 @@ export default function References() {
   }
 
   async function handleDeleteConfirmed() {
-    if (!confirmDelete) return;
+    if (!confirmDelete || confirmDeleteLoading) return;
     const deleted = confirmDelete;
+    setConfirmDeleteLoading(true);
     try {
       await referencesApi.delete(deleted._id);
       setConfirmDelete(null);
@@ -180,6 +182,8 @@ export default function References() {
       setConfirmDelete(null);
       setError('Failed to delete reference. Please try again.');
       await load();
+    } finally {
+      setConfirmDeleteLoading(false);
     }
   }
 
@@ -438,7 +442,10 @@ export default function References() {
         message={confirmDelete ? `Remove “${confirmDelete.title}”? This cannot be undone.` : ''}
         confirmText="Delete"
         onConfirm={handleDeleteConfirmed}
-        onCancel={() => setConfirmDelete(null)}
+        onCancel={() => {
+          if (!confirmDeleteLoading) setConfirmDelete(null);
+        }}
+        confirmLoading={confirmDeleteLoading}
         variant="danger"
       />
     </div>

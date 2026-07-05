@@ -7,8 +7,10 @@ import Loader from '../components/Loader';
 import TaskManagerClock from '../components/TaskManagerClock';
 import { useOptimisticTaskToggle } from '../hooks/useOptimisticTaskToggle';
 import { useOptimisticTaskReorder } from '../hooks/useOptimisticTaskReorder';
+import { useTaskListData } from '../hooks/useTaskListData';
 import { sortTasks, reorderListToPosition } from '../lib/taskUtils';
 import TaskPositionInput from '../components/TaskPositionInput';
+import ButtonSpinner from '../components/ButtonSpinner';
 
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 const PRIORITY_STYLES = {
@@ -60,7 +62,23 @@ export default function TaskManager() {
   const [editTaskPriority, setEditTaskPriority] = useState('medium');
   const [editTaskRecurrence, setEditTaskRecurrence] = useState('');
   const [confirmModal, setConfirmModal] = useState(null);
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
   const addInputRef = useRef(null);
+
+  const fetchDailyTasks = useCallback(
+    () => tasksApi.list({ date }).then((r) => r.data),
+    [date]
+  );
+
+  const {
+    loadTasks,
+    debouncedRefresh,
+    markTogglePending,
+    removeTogglePending,
+  } = useTaskListData({
+    fetchTasks: fetchDailyTasks,
+    setTasks: setDailyTasks,
+  });
 
   const [prevTab, setPrevTab] = useState(tab);
   if (prevTab !== tab) {
@@ -83,8 +101,7 @@ export default function TaskManager() {
     async function fetchDaily() {
       setDailyLoading(true);
       try {
-        const { data } = await tasksApi.list({ date });
-        if (!cancelled) setDailyTasks(data);
+        await loadTasks(true);
       } catch {
         if (!cancelled) setDailyTasks([]);
       } finally {
@@ -93,7 +110,7 @@ export default function TaskManager() {
     }
     if (tab === 'today') fetchDaily();
     return () => { cancelled = true; };
-  }, [tab, date]);
+  }, [tab, date, loadTasks]);
 
   useEffect(() => {
     if (tab !== 'today') return;
@@ -183,13 +200,15 @@ export default function TaskManager() {
     }
   }
 
-  const buildTogglePayload = useCallback(
-    (task, completed) => (task.recurrenceRule ? { completed, date } : { completed }),
-    [date]
-  );
   const toggleDailyTask = useOptimisticTaskToggle({
+    tasks: dailyTasks,
     setTasks: setDailyTasks,
-    buildUpdatePayload: buildTogglePayload,
+    apiToggle: (taskId, dateStr) => tasksApi.toggle(taskId, dateStr),
+    getToggleDate: (task) => (task.recurrenceRule ? date : undefined),
+    markTogglePending,
+    removeTogglePending,
+    debouncedRefresh,
+    onError: (err) => console.error('Failed to toggle task:', err),
   });
   const { moveTask: moveDailyTask, moveTaskToPosition: moveDailyTaskToPosition } =
     useOptimisticTaskReorder({
@@ -199,12 +218,15 @@ export default function TaskManager() {
 
   async function deleteDailyTask(task) {
     const snapshot = dailyTasks;
+    setDeletingTaskId(task._id);
     setDailyTasks((prev) => prev.filter((t) => t._id !== task._id));
     try {
       await tasksApi.delete(task._id);
     } catch (err) {
       setDailyTasks(snapshot);
       console.error(err);
+    } finally {
+      setDeletingTaskId(null);
     }
   }
 
@@ -294,13 +316,15 @@ export default function TaskManager() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
+      confirmLoading: false,
       onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
         try {
           await deleteProject(project._id, isArchived);
           setConfirmModal(null);
         } catch (err) {
           console.error(err);
-          setConfirmModal(null);
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
         }
       },
       onCancel: () => setConfirmModal(null),
@@ -453,14 +477,9 @@ export default function TaskManager() {
             <button
               type="submit"
               disabled={addingTask || !newTaskTitle.trim()}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+              className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
             >
-              {addingTask ? (
-                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                </svg>
-              ) : 'Add'}
+              Add
             </button>
           </form>
           {dailyLoading && dailyTasks.length === 0 ? (
@@ -582,9 +601,17 @@ export default function TaskManager() {
                   <button
                     type="button"
                     onClick={() => deleteDailyTask(task)}
-                    className="text-slate-400 hover:text-red-600 text-sm"
+                    disabled={deletingTaskId === task._id}
+                    className="text-slate-400 hover:text-red-600 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    Delete
+                    {deletingTaskId === task._id ? (
+                      <span className="inline-flex items-center gap-1">
+                        <ButtonSpinner />
+                        Deleting…
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
                   </button>
                   <TaskPositionInput
                     position={taskIndex + 1}
@@ -799,6 +826,7 @@ export default function TaskManager() {
           variant={confirmModal.variant}
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
+          confirmLoading={confirmModal.confirmLoading}
         />
       )}
     </div>

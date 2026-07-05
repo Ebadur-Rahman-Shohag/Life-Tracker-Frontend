@@ -1,7 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { prayers as prayersApi } from '../api/client';
 import PrayerChecklist from '../components/PrayerChecklist';
 import { PRAYER_CATEGORIES } from '../lib/categories';
+import {
+  buildPrayerCacheKey,
+  getPrayerCache,
+  hasPrayerCacheForView,
+  updatePrayerCache,
+} from '../lib/prayerTrackerCache';
 import {
   formatDate,
   getWeekDates,
@@ -34,10 +40,19 @@ import Loader from '../components/Loader';
  * - Streak tracking and milestones
  * - Optimistic UI updates with debounced refresh
  */
+function TableLoadingOverlay() {
+  return (
+    <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10 rounded-xl">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
+    </div>
+  );
+}
+
 export default function PrayerTracker() {
   // ============ STATE MANAGEMENT ============
   const [view, setView] = useState('week');
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [tableRefreshing, setTableRefreshing] = useState(false);
 
   // ============ COMPUTED VALUES ============
   const currentYear = currentDate.getFullYear();
@@ -150,31 +165,99 @@ export default function PrayerTracker() {
     },
   });
 
+  // ============ CACHE ============
+
+  const cacheKey = useMemo(
+    () => buildPrayerCacheKey(view, getStartDate(), getEndDate(), currentYear),
+    [view, getStartDate, getEndDate, currentYear]
+  );
+
+  const cached = getPrayerCache();
+  const hasCachedData = hasPrayerCacheForView(view, cacheKey, currentYear);
+
+  const displayDailyStats =
+    dailyStats.length > 0 ? dailyStats : hasCachedData ? cached.dailyStats : dailyStats;
+  const displayStreakStats = streakStats ?? (cached.streakStats || null);
+  const displayMonthlyStats =
+    monthlyStats ??
+    (cached.monthlyStatsYear === currentYear ? cached.monthlyStats : null);
+
   // ============ EFFECTS ============
 
-  // Load stats on mount and when view/date changes (monthly only for year view)
+  // Hydrate from cache before paint on route return
+  useLayoutEffect(() => {
+    const c = getPrayerCache();
+    if (!hasPrayerCacheForView(view, cacheKey, currentYear)) return;
+
+    if (view !== 'year') {
+      setDailyStats(c.dailyStats);
+    }
+    setDataLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load stats on mount and when view/date changes (background refresh when cached)
   useEffect(() => {
+    let cancelled = false;
+    const c = getPrayerCache();
+    const keyMatch = hasPrayerCacheForView(view, cacheKey, currentYear);
+    const hasSessionData = c.dailyStats.length > 0 || c.streakStats || c.monthlyStats;
+
+    if (!keyMatch) {
+      if (hasSessionData) {
+        setTableRefreshing(true);
+      } else {
+        setDataLoading(true);
+      }
+    }
+
     const loadStats = async () => {
-      setDataLoading(true);
       setError(null);
       try {
-        const requests = [loadDailyStats(false), loadStreakStats()];
+        const requests = [loadDailyStats(view !== 'year' && keyMatch), loadStreakStats()];
         if (view === 'year') {
           requests.push(loadMonthlyStats());
         }
         await Promise.all(requests);
       } catch (err) {
-        setError('Failed to load data. Please refresh the page.');
+        if (!cancelled) setError('Failed to load data. Please refresh the page.');
       } finally {
-        setDataLoading(false);
+        if (!cancelled) {
+          setDataLoading(false);
+          setTableRefreshing(false);
+        }
       }
     };
     loadStats();
-  }, [view, currentDate, loadDailyStats, loadMonthlyStats, loadStreakStats, setDataLoading, setError]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    view,
+    currentDate,
+    cacheKey,
+    loadDailyStats,
+    loadMonthlyStats,
+    loadStreakStats,
+    setDataLoading,
+    setError,
+  ]);
+
+  // Keep module cache in sync with latest fetched data
+  useEffect(() => {
+    if (dailyStats.length === 0 && !streakStats && !monthlyStats) return;
+    updatePrayerCache({
+      dailyStats,
+      streakStats,
+      monthlyStats,
+      ...(view !== 'year' ? { dailyStatsKey: cacheKey } : {}),
+      ...(view === 'year' && monthlyStats ? { monthlyStatsYear: currentYear } : {}),
+    });
+  }, [dailyStats, streakStats, monthlyStats, cacheKey, currentYear, view]);
 
   // ============ COMPUTED VALUES FOR UI ============
 
-  const todayDayStats = dailyStats.find((d) => toISODateString(d.date) === todayStr);
+  const todayDayStats = displayDailyStats.find((d) => toISODateString(d.date) === todayStr);
   const prayerStatuses = todayDayStats?.prayerStatuses || {};
   const prayersForChecklist = useMemo(() => {
     return PRAYER_CATEGORIES.reduce((acc, { id }) => {
@@ -183,7 +266,7 @@ export default function PrayerTracker() {
     }, {});
   }, [prayerStatuses]);
 
-  const completedToday = dailyStats.find((d) => toISODateString(d.date) === todayStr);
+  const completedToday = displayDailyStats.find((d) => toISODateString(d.date) === todayStr);
   const todayPercent = completedToday?.percentage || 0;
 
   // ============ TOGGLE HANDLERS ============
@@ -301,7 +384,7 @@ export default function PrayerTracker() {
 
   // ============ RENDER ============
 
-  if (dataLoading) {
+  if (dataLoading && !hasCachedData && !cached.streakStats && !cached.monthlyStats) {
     return <Loader message="Loading prayers..." />;
   }
 
@@ -325,12 +408,12 @@ export default function PrayerTracker() {
         <h1 className="text-2xl font-bold text-slate-800">Prayer Tracker</h1>
         <div className="flex items-center gap-3 text-sm">
           <span
-            className={`px-3 py-1 rounded-full font-medium ${(streakStats?.currentStreak || 0) > 0
+            className={`px-3 py-1 rounded-full font-medium ${(displayStreakStats?.currentStreak || 0) > 0
               ? 'bg-emerald-100 text-emerald-800'
               : 'bg-slate-100 text-slate-600'
               }`}
           >
-            Streak: {streakStats?.currentStreak || 0} days
+            Streak: {displayStreakStats?.currentStreak || 0} days
           </span>
           <span
             className={`px-3 py-1 rounded-full font-medium ${todayPercent === PRAYER_SUCCESS_THRESHOLD
@@ -435,30 +518,34 @@ export default function PrayerTracker() {
 
       {/* Week / Month View - Using Shared TrackerTable Component */}
       {(view === 'week' || view === 'month') && (
-        <TrackerTable
-          dates={view === 'week' ? weekDates : monthDates}
-          dailyStats={dailyStats}
-          today={today}
-          columns={PRAYER_CATEGORIES}
-          getStatus={(dayStats, prayerId) => dayStats?.prayerStatuses?.[prayerId] || false}
-          onToggle={(prayerId, dateStr, isCompleted) => handleToggle(prayerId, dateStr, !isCompleted)}
-          progressThresholds={{
-            emerald: PRAYER_PROGRESS_THRESHOLD_EMERALD,
-            amber: PRAYER_PROGRESS_THRESHOLD_AMBER,
-          }}
-          renderColumnHeader={renderPrayerColumnHeader}
-          view={view}
-          title={view === 'week' ? 'Weekly Progress' : 'Monthly Progress'}
-        />
+        <div className="relative">
+          {tableRefreshing && <TableLoadingOverlay />}
+          <TrackerTable
+            dates={view === 'week' ? weekDates : monthDates}
+            dailyStats={displayDailyStats}
+            today={today}
+            columns={PRAYER_CATEGORIES}
+            getStatus={(dayStats, prayerId) => dayStats?.prayerStatuses?.[prayerId] || false}
+            onToggle={(prayerId, dateStr, isCompleted) => handleToggle(prayerId, dateStr, !isCompleted)}
+            progressThresholds={{
+              emerald: PRAYER_PROGRESS_THRESHOLD_EMERALD,
+              amber: PRAYER_PROGRESS_THRESHOLD_AMBER,
+            }}
+            renderColumnHeader={renderPrayerColumnHeader}
+            view={view}
+            title={view === 'week' ? 'Weekly Progress' : 'Monthly Progress'}
+          />
+        </div>
       )}
 
       {/* Year Overview */}
       {view === 'year' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+        <div className="relative bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+          {tableRefreshing && <TableLoadingOverlay />}
           <h2 className="text-lg font-semibold text-slate-800 mb-4">Year Overview</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {MONTH_NAMES.map((monthName, index) => {
-              const stats = monthlyStats?.months?.[index] || { percentage: 0 };
+              const stats = displayMonthlyStats?.months?.[index] || { percentage: 0 };
               const percent = stats.percentage;
               return (
                 <button
@@ -499,13 +586,13 @@ export default function PrayerTracker() {
           <div className="bg-emerald-50 rounded-lg px-4 py-3">
             <p className="text-sm text-emerald-600">Current Streak</p>
             <p className="text-2xl font-bold text-emerald-700">
-              {streakStats?.currentStreak || 0} days
+              {displayStreakStats?.currentStreak || 0} days
             </p>
           </div>
           <div className="bg-amber-50 rounded-lg px-4 py-3">
             <p className="text-sm text-amber-600">Longest Streak</p>
             <p className="text-2xl font-bold text-amber-700">
-              {streakStats?.longestStreak || 0} days
+              {displayStreakStats?.longestStreak || 0} days
             </p>
           </div>
         </div>
@@ -513,7 +600,7 @@ export default function PrayerTracker() {
         <h3 className="font-medium text-slate-700 mb-2">Milestones</h3>
         <div className="flex flex-wrap gap-2">
           {PRAYER_MILESTONES.map((days) => {
-            const achieved = (streakStats?.longestStreak || 0) >= days;
+            const achieved = (displayStreakStats?.longestStreak || 0) >= days;
             return (
               <div
                 key={days}

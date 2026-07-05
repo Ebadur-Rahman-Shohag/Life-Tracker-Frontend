@@ -345,6 +345,7 @@ export default function HabitTracker() {
       console.error('Failed to delete habit:', err);
       setError('Failed to delete habit. Please try again.');
       void refreshStatsAfterHabitChange();
+      throw err;
     }
   };
 
@@ -360,9 +361,15 @@ export default function HabitTracker() {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       variant: 'danger',
-      onConfirm: () => {
-        setConfirmModal(null);
-        void deleteHabit(id);
+      confirmLoading: false,
+      onConfirm: async () => {
+        setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: true } : null));
+        try {
+          await deleteHabit(id);
+          setConfirmModal(null);
+        } catch {
+          setConfirmModal((prev) => (prev ? { ...prev, confirmLoading: false } : null));
+        }
       },
       onCancel: () => setConfirmModal(null),
     });
@@ -401,7 +408,7 @@ export default function HabitTracker() {
 
   // ============ RENDER ============
 
-  if (loading) {
+  if (loading || dataLoading) {
     return <Loader message="Loading habits..." />;
   }
 
@@ -768,6 +775,7 @@ export default function HabitTracker() {
           variant={confirmModal.variant}
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
+          confirmLoading={confirmModal.confirmLoading}
         />
       )}
     </div>

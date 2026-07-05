@@ -92,6 +92,7 @@ function ProjectPageModals({
           variant={confirmModal.variant}
           onConfirm={confirmModal.onConfirm}
           onCancel={confirmModal.onCancel}
+          confirmLoading={confirmModal.confirmLoading}
         />
       )}
     </>
